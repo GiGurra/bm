@@ -29,7 +29,7 @@ brew install ollama          # macOS / Linux (Homebrew)
 # or download from https://ollama.com/download
 
 # Start the Ollama server
-ollama serve
+ollama serve                 # or: brew services start ollama
 
 # Pull the default embedding model
 ollama pull qwen3-embedding:0.6b
