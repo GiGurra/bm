@@ -192,6 +192,24 @@ func chromeTimeToRFC3339(chromeTimestamp string) string {
 	return time.Unix(unixSec, (usec%1_000_000)*1000).Format(time.RFC3339)
 }
 
+// Dedup removes duplicate bookmarks by (URL, FolderPath), keeping the entry
+// with the latest DateAdded. This matches the dedup logic in BulkUpsertBookmarks.
+func Dedup(bookmarks []Bookmark) []Bookmark {
+	type key struct{ url, folder string }
+	deduped := make(map[key]Bookmark, len(bookmarks))
+	for _, b := range bookmarks {
+		k := key{b.URL, b.FolderPath}
+		if prev, exists := deduped[k]; !exists || b.DateAdded > prev.DateAdded {
+			deduped[k] = b
+		}
+	}
+	result := make([]Bookmark, 0, len(deduped))
+	for _, b := range deduped {
+		result = append(result, b)
+	}
+	return result
+}
+
 func walkNode(node chromeNode, folderPath string, out *[]Bookmark) {
 	if node.Type == "url" && node.URL != "" {
 		// Skip non-http bookmarks (javascript:, chrome:, etc.)

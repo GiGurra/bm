@@ -294,8 +294,7 @@ func ListProfileStats() ([]ProfileStats, error) {
 			COUNT(*) as total,
 			SUM(CASE WHEN b.fetch_status = 'ok' THEN 1 ELSE 0 END) as fetched,
 			SUM(CASE WHEN b.fetch_status LIKE 'error:%' THEN 1 ELSE 0 END) as errors,
-			(SELECT COUNT(DISTINCT e.url) FROM bookmark_embeddings e
-			 WHERE e.url IN (SELECT url FROM bookmarks WHERE source = b.source)) as indexed
+			SUM(CASE WHEN EXISTS (SELECT 1 FROM bookmark_embeddings e WHERE e.url = b.url) THEN 1 ELSE 0 END) as indexed
 		FROM bookmarks b
 		GROUP BY b.source
 		ORDER BY total DESC`)
@@ -362,25 +361,31 @@ type YearStats struct {
 }
 
 // ListYearStats returns aggregate stats grouped by year of chrome_added_at.
-func ListYearStats() ([]YearStats, error) {
+func ListYearStats(sourceFilter string) ([]YearStats, error) {
 	db, err := Open()
 	if err != nil {
 		return nil, err
 	}
 
-	rows, err := db.Query(`
+	query := `
 		SELECT
 			COALESCE(NULLIF(strftime('%Y', chrome_added_at), ''), '?') as year,
 			COUNT(*) as total,
 			SUM(CASE WHEN fetch_status = 'ok' THEN 1 ELSE 0 END) as fetched,
 			SUM(CASE WHEN fetch_status LIKE 'error:%' THEN 1 ELSE 0 END) as errors,
-			(SELECT COUNT(DISTINCT e.url) FROM bookmark_embeddings e
-			 WHERE e.url IN (SELECT url FROM bookmarks b2
-			   WHERE COALESCE(NULLIF(strftime('%Y', b2.chrome_added_at), ''), '?') =
-			         COALESCE(NULLIF(strftime('%Y', bookmarks.chrome_added_at), ''), '?'))) as indexed
-		FROM bookmarks
+			SUM(CASE WHEN EXISTS (SELECT 1 FROM bookmark_embeddings e WHERE e.url = bookmarks.url) THEN 1 ELSE 0 END) as indexed
+		FROM bookmarks`
+
+	var args []any
+	if sourceFilter != "" {
+		query += ` WHERE source = ? OR source_name LIKE ?`
+		args = append(args, sourceFilter, "%"+sourceFilter+"%")
+	}
+	query += `
 		GROUP BY year
-		ORDER BY year`)
+		ORDER BY year`
+
+	rows, err := db.Query(query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -404,13 +409,13 @@ type FetchStatusStats struct {
 }
 
 // ListFetchStatusStats returns bookmark counts grouped by fetch_status.
-func ListFetchStatusStats() ([]FetchStatusStats, error) {
+func ListFetchStatusStats(sourceFilter string) ([]FetchStatusStats, error) {
 	db, err := Open()
 	if err != nil {
 		return nil, err
 	}
 
-	rows, err := db.Query(`
+	query := `
 		SELECT
 			CASE
 				WHEN fetch_status = '' AND fetched_at = '' THEN 'not attempted'
@@ -418,9 +423,18 @@ func ListFetchStatusStats() ([]FetchStatusStats, error) {
 				ELSE fetch_status
 			END as status,
 			COUNT(*) as count
-		FROM bookmarks
+		FROM bookmarks`
+
+	var args []any
+	if sourceFilter != "" {
+		query += ` WHERE source = ? OR source_name LIKE ?`
+		args = append(args, sourceFilter, "%"+sourceFilter+"%")
+	}
+	query += `
 		GROUP BY status
-		ORDER BY count DESC`)
+		ORDER BY count DESC`
+
+	rows, err := db.Query(query, args...)
 	if err != nil {
 		return nil, err
 	}

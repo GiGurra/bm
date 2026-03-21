@@ -3,6 +3,8 @@ package stats
 import (
 	"fmt"
 	"os"
+	"sort"
+	"strings"
 
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/gigurra/bm/pkg/chrome"
@@ -11,13 +13,22 @@ import (
 	"github.com/spf13/cobra"
 )
 
-type Params struct{}
+type Params struct {
+	Profile string `short:"p" optional:"true" help:"Filter by profile (name, email, or source ID)"`
+}
 
 func Cmd() *cobra.Command {
 	return boa.CmdT[Params]{
 		Use:   "stats",
 		Short: "Show bookmark database statistics",
+		InitFuncCtx: func(ctx *boa.HookContext, params *Params, cmd *cobra.Command) error {
+			ctx.GetParam(&params.Profile).SetAlternativesFunc(profileAlternatives)
+			ctx.GetParam(&params.Profile).SetStrictAlts(false)
+			return nil
+		},
 		RunFunc: func(params *Params, cmd *cobra.Command, args []string) {
+			profileFilter := params.Profile
+
 			// Per-profile: Chrome JSON vs imported vs fetched vs indexed
 			profiles, _ := chrome.DiscoverProfiles()
 			dbProfileStats, _ := db.ListProfileStats()
@@ -27,7 +38,29 @@ func Cmd() *cobra.Command {
 				dbBySource[s.Source] = s
 			}
 
-			if len(profiles) > 0 || len(dbProfileStats) > 0 {
+			// Filter Chrome profiles if --profile is set
+			if profileFilter != "" {
+				var filtered []chrome.Profile
+				for _, p := range profiles {
+					if p.DirName == profileFilter || p.UserName == profileFilter || p.Name == profileFilter {
+						filtered = append(filtered, p)
+					}
+				}
+				profiles = filtered
+			}
+
+			// Collect deduped Chrome bookmarks for per-year counts.
+			chromeByYear := make(map[string]int)
+
+			// Resolve the source ID for the DB queries
+			dbSourceFilter := ""
+			if profileFilter != "" && len(profiles) > 0 {
+				dbSourceFilter = profiles[0].SourceID()
+			} else if profileFilter != "" {
+				dbSourceFilter = profileFilter
+			}
+
+			if len(profiles) > 0 || (profileFilter == "" && len(dbProfileStats) > 0) {
 				fmt.Println("Profiles:")
 				t := table.NewWriter()
 				t.SetOutputMirror(os.Stdout)
@@ -38,7 +71,15 @@ func Cmd() *cobra.Command {
 				for _, p := range profiles {
 					chromeCount := 0
 					if bookmarks, err := chrome.ParseBookmarksFile(p.Path); err == nil {
+						bookmarks = chrome.Dedup(bookmarks)
 						chromeCount = len(bookmarks)
+						for _, b := range bookmarks {
+							year := "?"
+							if len(b.DateAdded) >= 4 {
+								year = b.DateAdded[:4]
+							}
+							chromeByYear[year]++
+						}
 					}
 					sourceID := p.SourceID()
 					dbs := dbBySource[sourceID]
@@ -53,15 +94,17 @@ func Cmd() *cobra.Command {
 				}
 
 				// DB profiles not matched to a Chrome profile (e.g. removed profiles)
-				for _, dbs := range dbBySource {
-					name := dbs.SourceName
-					if name == "" {
-						name = dbs.Source
+				if profileFilter == "" {
+					for _, dbs := range dbBySource {
+						name := dbs.SourceName
+						if name == "" {
+							name = dbs.Source
+						}
+						t.AppendRow(table.Row{name, "-", dbs.Total, dbs.Fetched, dbs.Indexed})
+						totalImported += dbs.Total
+						totalFetched += dbs.Fetched
+						totalIndexed += dbs.Indexed
 					}
-					t.AppendRow(table.Row{name, "-", dbs.Total, dbs.Fetched, dbs.Indexed})
-					totalImported += dbs.Total
-					totalFetched += dbs.Fetched
-					totalIndexed += dbs.Indexed
 				}
 
 				t.AppendFooter(table.Row{"Total", totalChrome, totalImported, totalFetched, totalIndexed})
@@ -69,33 +112,59 @@ func Cmd() *cobra.Command {
 			}
 
 			// By year
-			yearStats, err := db.ListYearStats()
+			yearStats, err := db.ListYearStats(dbSourceFilter)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 				os.Exit(1)
 			}
 
-			if len(yearStats) > 0 {
+			if len(yearStats) > 0 || len(chromeByYear) > 0 {
+				// Merge DB year stats with Chrome year counts
+				type yearRow struct {
+					year                                      string
+					chrome, imported, fetched, errors, indexed int
+				}
+				rowByYear := make(map[string]*yearRow)
+				for _, s := range yearStats {
+					rowByYear[s.Year] = &yearRow{year: s.Year, imported: s.Total, fetched: s.Fetched, errors: s.Errors, indexed: s.Indexed}
+				}
+				for year, count := range chromeByYear {
+					if r, ok := rowByYear[year]; ok {
+						r.chrome = count
+					} else {
+						rowByYear[year] = &yearRow{year: year, chrome: count}
+					}
+				}
+
+				// Sort by year
+				var years []string
+				for y := range rowByYear {
+					years = append(years, y)
+				}
+				sort.Strings(years)
+
 				fmt.Println("\nBy year:")
 				t := table.NewWriter()
 				t.SetOutputMirror(os.Stdout)
 				t.SetStyle(table.StyleLight)
-				t.AppendHeader(table.Row{"Year", "Imported", "Fetched", "Errors", "Indexed"})
+				t.AppendHeader(table.Row{"Year", "In Chrome", "Imported", "Fetched", "Errors", "Indexed"})
 
-				var grandTotal, grandFetched, grandErrors, grandIndexed int
-				for _, s := range yearStats {
-					t.AppendRow(table.Row{s.Year, s.Total, s.Fetched, s.Errors, s.Indexed})
-					grandTotal += s.Total
-					grandFetched += s.Fetched
-					grandErrors += s.Errors
-					grandIndexed += s.Indexed
+				var grandChrome, grandTotal, grandFetched, grandErrors, grandIndexed int
+				for _, y := range years {
+					r := rowByYear[y]
+					t.AppendRow(table.Row{r.year, r.chrome, r.imported, r.fetched, r.errors, r.indexed})
+					grandChrome += r.chrome
+					grandTotal += r.imported
+					grandFetched += r.fetched
+					grandErrors += r.errors
+					grandIndexed += r.indexed
 				}
-				t.AppendFooter(table.Row{"Total", grandTotal, grandFetched, grandErrors, grandIndexed})
+				t.AppendFooter(table.Row{"Total", grandChrome, grandTotal, grandFetched, grandErrors, grandIndexed})
 				t.Render()
 			}
 
 			// Fetch status breakdown
-			fetchStats, err := db.ListFetchStatusStats()
+			fetchStats, err := db.ListFetchStatusStats(dbSourceFilter)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 				os.Exit(1)
@@ -114,4 +183,20 @@ func Cmd() *cobra.Command {
 			}
 		},
 	}.ToCobra()
+}
+
+func profileAlternatives(_ *cobra.Command, _ []string, toComplete string) []string {
+	profiles, err := chrome.DiscoverProfiles()
+	if err != nil {
+		return nil
+	}
+	var alts []string
+	for _, p := range profiles {
+		for _, candidate := range []string{p.UserName, p.SourceID(), p.DirName} {
+			if candidate != "" && strings.HasPrefix(strings.ToLower(candidate), strings.ToLower(toComplete)) {
+				alts = append(alts, candidate)
+			}
+		}
+	}
+	return alts
 }

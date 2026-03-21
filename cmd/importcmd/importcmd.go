@@ -98,6 +98,7 @@ func importProfile(p chrome.Profile) int {
 		return 0
 	}
 
+	bookmarks = chrome.Dedup(bookmarks)
 	sourceID := p.SourceID()
 	sourceName := p.DisplayName()
 
@@ -148,6 +149,7 @@ func importFile(path string) int {
 		return 0
 	}
 
+	bookmarks = chrome.Dedup(bookmarks)
 	dbBookmarks := make([]*db.Bookmark, len(bookmarks))
 	for i, b := range bookmarks {
 		dbBookmarks[i] = &db.Bookmark{
