@@ -1,6 +1,13 @@
-# Content Fetching
+# Content Fetching (Beta)
 
-bm can download and extract text from bookmarked pages. This content is used for both full-text search and semantic search.
+!!! note "Optional"
+    Content fetching is **not required**. Both text search and semantic search work without it — bookmark titles, URLs, and folder paths are always indexed. Fetching adds page body text for deeper search results.
+
+!!! warning "Beta"
+    This feature is considered beta. It works, but search result quality with fetched content has not been extensively validated yet.
+
+!!! info "Limitations"
+    Pages requiring authentication (login walls, paywalls, etc.) cannot be fetched — bm makes plain HTTP GET requests without cookies or session tokens.
 
 ## Usage
 
