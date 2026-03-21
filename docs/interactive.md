@@ -15,8 +15,8 @@ bm list -w -p "Default"   # filter by profile
 |-----|--------|
 | `/` | Start text search |
 | `s` | Start semantic search |
-| `↑`/`↓` or `j`/`k` | Navigate (also exits search input) |
-| `Enter` | Submit search (in input) / Open URL (in list) |
+| `↑`/`↓` or `j`/`k` | Navigate (exits search input but keeps filter) |
+| `Enter` | Open selected bookmark in browser |
 | `1`-`5` | Sort by column |
 | `Esc` | Clear search / exit mode |
 | `q` | Quit |

@@ -237,6 +237,28 @@ func (m *watchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, m.runSemanticSearch(query)
 
+	case tea.PasteMsg:
+		if m.semanticFocused {
+			var cmd tea.Cmd
+			m.semanticInput, cmd = m.semanticInput.Update(msg)
+			return m, cmd
+		}
+		if m.searchFocused {
+			prevVal := m.searchInput.Value()
+			var cmd tea.Cmd
+			m.searchInput, cmd = m.searchInput.Update(msg)
+			if m.searchInput.Value() != prevVal {
+				m.searchSeq++
+				seq := m.searchSeq
+				query := m.searchInput.Value()
+				debounceCmd := tea.Tick(150*time.Millisecond, func(t time.Time) tea.Msg {
+					return debounceMsg{seq: seq, query: query, mode: modeText}
+				})
+				return m, tea.Batch(cmd, debounceCmd)
+			}
+			return m, cmd
+		}
+
 	case tea.KeyPressMsg:
 		return m.handleKey(msg)
 	}
@@ -265,19 +287,26 @@ func (m *watchModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 				m.scores = nil
 			}
 		case "enter":
-			query := strings.TrimSpace(m.semanticInput.Value())
-			if query != "" {
+			// Open selected bookmark
+			if m.cursor < len(m.displayed) {
 				m.semanticFocused = false
 				m.semanticInput.Blur()
-				m.searchMode = modeSemantic
-				m.lastQuery = query
-				m.searching = true
-				return m, m.runSemanticSearch(query)
+				return m, openURL(m.displayed[m.cursor].URL)
 			}
-		case "up", "down":
+		case "up":
 			m.semanticFocused = false
 			m.semanticInput.Blur()
-			return m, nil
+			if m.cursor > 0 {
+				m.cursor--
+				m.ensureVisible()
+			}
+		case "down":
+			m.semanticFocused = false
+			m.semanticInput.Blur()
+			if m.cursor < len(m.displayed)-1 {
+				m.cursor++
+				m.ensureVisible()
+			}
 		default:
 			var cmd tea.Cmd
 			m.semanticInput, cmd = m.semanticInput.Update(msg)
@@ -311,20 +340,26 @@ func (m *watchModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 				m.searchInput.Blur()
 			}
 		case "enter":
-			query := strings.TrimSpace(m.searchInput.Value())
-			if query != "" {
+			// Open selected bookmark
+			if m.cursor < len(m.displayed) {
 				m.searchFocused = false
 				m.searchInput.Blur()
-				m.searchMode = modeText
-				m.lastQuery = query
-				m.searching = true
-				m.searchSeq++ // cancel pending debounce
-				return m, m.runFTSSearch(query)
+				return m, openURL(m.displayed[m.cursor].URL)
 			}
-		case "up", "down":
+		case "up":
 			m.searchFocused = false
 			m.searchInput.Blur()
-			return m, nil
+			if m.cursor > 0 {
+				m.cursor--
+				m.ensureVisible()
+			}
+		case "down":
+			m.searchFocused = false
+			m.searchInput.Blur()
+			if m.cursor < len(m.displayed)-1 {
+				m.cursor++
+				m.ensureVisible()
+			}
 		default:
 			var cmd tea.Cmd
 			m.searchInput, cmd = m.searchInput.Update(msg)
