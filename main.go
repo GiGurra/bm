@@ -9,7 +9,6 @@ import (
 	"github.com/gigurra/bm/cmd/importcmd"
 	"github.com/gigurra/bm/cmd/index"
 	"github.com/gigurra/bm/cmd/list"
-	"github.com/gigurra/bm/cmd/profile"
 	"github.com/gigurra/bm/cmd/search"
 	"github.com/gigurra/bm/cmd/stats"
 	"github.com/gigurra/bm/cmd/sync"
@@ -30,7 +29,6 @@ func main() {
 		list.Cmd(),
 		sync.Cmd(),
 		clear.Cmd(),
-		profile.Cmd(),
 		stats.Cmd(),
 	)
 
