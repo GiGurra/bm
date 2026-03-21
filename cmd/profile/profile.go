@@ -20,7 +20,9 @@ func Cmd() *cobra.Command {
 	return cmd
 }
 
-type ListParams struct{}
+type ListParams struct {
+	Verbose bool `short:"v" help:"Show source IDs"`
+}
 
 func listCmd() *cobra.Command {
 	return boa.CmdT[ListParams]{
@@ -82,14 +84,25 @@ func listCmd() *cobra.Command {
 			t := table.NewWriter()
 			t.SetOutputMirror(os.Stdout)
 			t.SetStyle(table.StyleLight)
-			t.AppendHeader(table.Row{"Profile", "Source ID", "Total", "Fetched", "Errors", "Indexed"})
+			if params.Verbose {
+				t.AppendHeader(table.Row{"Profile", "Source ID", "Total", "Fetched", "Errors", "Indexed"})
+			} else {
+				t.AppendHeader(table.Row{"Profile", "Total", "Fetched", "Errors", "Indexed"})
+			}
 
 			var grandTotal, grandFetched, grandErrors, grandIndexed int
 			for _, r := range rows {
-				t.AppendRow(table.Row{
-					r.displayName, r.sourceID,
-					r.stats.Total, r.stats.Fetched, r.stats.Errors, r.stats.Indexed,
-				})
+				if params.Verbose {
+					t.AppendRow(table.Row{
+						r.displayName, r.sourceID,
+						r.stats.Total, r.stats.Fetched, r.stats.Errors, r.stats.Indexed,
+					})
+				} else {
+					t.AppendRow(table.Row{
+						r.displayName,
+						r.stats.Total, r.stats.Fetched, r.stats.Errors, r.stats.Indexed,
+					})
+				}
 				grandTotal += r.stats.Total
 				grandFetched += r.stats.Fetched
 				grandErrors += r.stats.Errors
@@ -97,7 +110,11 @@ func listCmd() *cobra.Command {
 			}
 
 			if len(rows) > 1 {
-				t.AppendFooter(table.Row{"Total", "", grandTotal, grandFetched, grandErrors, grandIndexed})
+				if params.Verbose {
+					t.AppendFooter(table.Row{"Total", "", grandTotal, grandFetched, grandErrors, grandIndexed})
+				} else {
+					t.AppendFooter(table.Row{"Total", grandTotal, grandFetched, grandErrors, grandIndexed})
+				}
 			}
 
 			t.Render()
