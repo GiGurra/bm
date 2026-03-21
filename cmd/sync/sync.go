@@ -2,10 +2,12 @@ package sync
 
 import (
 	"fmt"
-	"os"
 	"strings"
 
 	"github.com/GiGurra/boa/pkg/boa"
+	"github.com/gigurra/bm/cmd/fetch"
+	"github.com/gigurra/bm/cmd/importcmd"
+	"github.com/gigurra/bm/cmd/index"
 	"github.com/gigurra/bm/pkg/chrome"
 	"github.com/spf13/cobra"
 )
@@ -21,39 +23,19 @@ func Cmd() *cobra.Command {
 	return boa.CmdT[Params]{
 		Use:   "sync",
 		Short: "Import + index in one step",
-		Long:  "Runs import and index sequentially. Use 'bm fetch' separately to also fetch page content (beta).",
+		Long:  "Runs import and index sequentially. Use --fetch to also fetch page content (beta).",
 		InitFuncCtx: func(ctx *boa.HookContext, params *Params, cmd *cobra.Command) error {
 			ctx.GetParam(&params.Profile).SetAlternativesFunc(profileAlternatives)
 			ctx.GetParam(&params.Profile).SetStrictAlts(false)
 			return nil
 		},
 		RunFunc: func(params *Params, cmd *cobra.Command, args []string) {
-			setFlag := func(c *cobra.Command, name, value string) {
-				if value != "" {
-					if err := c.Flags().Set(name, value); err != nil {
-						fmt.Fprintf(os.Stderr, "Warning: %v\n", err)
-					}
-				}
-			}
-
 			fmt.Println("=== Step 1: Import ===")
-			for _, c := range cmd.Root().Commands() {
-				if c.Name() == "import" {
-					setFlag(c, "profile", params.Profile)
-					runSubcmd(c)
-					break
-				}
-			}
+			importcmd.Run("", params.Profile)
 
 			if params.Fetch {
 				fmt.Println("\n=== Step 2: Fetch ===")
-				for _, c := range cmd.Root().Commands() {
-					if c.Name() == "fetch" {
-						setFlag(c, "profile", params.Profile)
-						runSubcmd(c)
-						break
-					}
-				}
+				fetch.Run(params.Profile, "1y", false, 0, 500)
 			}
 
 			step := 2
@@ -61,29 +43,11 @@ func Cmd() *cobra.Command {
 				step = 3
 			}
 			fmt.Printf("\n=== Step %d: Index ===\n", step)
-			for _, c := range cmd.Root().Commands() {
-				if c.Name() == "index" {
-					setFlag(c, "model", params.Model)
-					setFlag(c, "url", params.URL)
-					setFlag(c, "profile", params.Profile)
-					runSubcmd(c)
-					break
-				}
-			}
+			index.Run(params.URL, params.Model, params.Profile, "1y", false)
 
 			fmt.Println("\nSync complete!")
 		},
 	}.ToCobra()
-}
-
-func runSubcmd(c *cobra.Command) {
-	if c.RunE != nil {
-		if err := c.RunE(c, nil); err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		}
-	} else if c.Run != nil {
-		c.Run(c, nil)
-	}
 }
 
 func profileAlternatives(_ *cobra.Command, _ []string, toComplete string) []string {

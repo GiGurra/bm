@@ -28,35 +28,38 @@ func Cmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(params *Params, cmd *cobra.Command, args []string) {
-			if params.Path != "" {
-				importFile(params.Path)
-				return
-			}
-
-			if params.Profile != "" {
-				profiles, err := chrome.DiscoverProfiles()
-				if err != nil {
-					fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-					os.Exit(1)
-				}
-				for _, p := range profiles {
-					if p.DirName == params.Profile || p.UserName == params.Profile || p.Name == params.Profile {
-						importProfile(p)
-						return
-					}
-				}
-				fmt.Fprintf(os.Stderr, "Profile %q not found. Available profiles:\n", params.Profile)
-				for _, p := range profiles {
-					fmt.Fprintf(os.Stderr, "  - %s\n", p.DisplayName())
-				}
-				os.Exit(1)
-				return
-			}
-
-			// Default (also --all-profiles): import all profiles
-			importAllProfiles()
+			Run(params.Path, params.Profile)
 		},
 	}.ToCobra()
+}
+
+func Run(path, profile string) {
+	if path != "" {
+		importFile(path)
+		return
+	}
+
+	if profile != "" {
+		profiles, err := chrome.DiscoverProfiles()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+		for _, p := range profiles {
+			if p.DirName == profile || p.UserName == profile || p.Name == profile {
+				importProfile(p)
+				return
+			}
+		}
+		fmt.Fprintf(os.Stderr, "Profile %q not found. Available profiles:\n", profile)
+		for _, p := range profiles {
+			fmt.Fprintf(os.Stderr, "  - %s\n", p.DisplayName())
+		}
+		os.Exit(1)
+		return
+	}
+
+	importAllProfiles()
 }
 
 func importAllProfiles() {

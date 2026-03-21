@@ -34,125 +34,129 @@ func Cmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(params *Params, cmd *cobra.Command, args []string) {
-			client := ollama.NewClient(params.URL, params.Model)
-
-			// Test connection
-			if _, err := client.EmbedOne("test"); err != nil {
-				fmt.Fprintf(os.Stderr, "Error connecting to Ollama: %v\n", err)
-				fmt.Fprintf(os.Stderr, "\nMake sure Ollama is running:\n")
-				fmt.Fprintf(os.Stderr, "  brew services start ollama\n")
-				fmt.Fprintf(os.Stderr, "  ollama pull %s\n", params.Model)
-				os.Exit(1)
-			}
-
-			var bookmarks []db.Bookmark
-			var err error
-			if params.Profile != "" {
-				bookmarks, err = db.ListBookmarksBySource(params.Profile)
-			} else {
-				bookmarks, err = db.ListBookmarks()
-			}
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-				os.Exit(1)
-			}
-
-			if len(bookmarks) == 0 {
-				fmt.Println("No bookmarks. Run 'bm import' first.")
-				return
-			}
-
-			// Apply age cutoff
-			cutoff := parseDuration(params.MaxAge)
-			if cutoff > 0 {
-				cutoffTime := time.Now().Add(-cutoff)
-				var filtered []db.Bookmark
-				skipped := 0
-				for _, b := range bookmarks {
-					age := bookmarkAge(b)
-					if !age.IsZero() && age.Before(cutoffTime) {
-						skipped++
-						continue
-					}
-					filtered = append(filtered, b)
-				}
-				if skipped > 0 {
-					fmt.Printf("Skipped %d bookmarks older than %s\n", skipped, params.MaxAge)
-				}
-				bookmarks = filtered
-			}
-
-			// Check what's already indexed
-			embeddedURLs, err := db.ListEmbeddedURLs()
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-				os.Exit(1)
-			}
-
-			if params.Reindex {
-				embeddedURLs = make(map[string]time.Time)
-			}
-
-			var toIndex []db.Bookmark
-			for _, b := range bookmarks {
-				if _, exists := embeddedURLs[b.URL]; !exists {
-					toIndex = append(toIndex, b)
-				}
-			}
-
-			if len(toIndex) == 0 {
-				fmt.Printf("All %d bookmarks already indexed.\n", len(bookmarks))
-				return
-			}
-
-			fmt.Printf("Indexing %d bookmarks (%d already indexed)...\n",
-				len(toIndex), len(bookmarks)-len(toIndex))
-
-			start := time.Now()
-			totalChunks := 0
-			errors := 0
-
-			for i, b := range toIndex {
-				title := b.Title
-				if len(title) > 50 {
-					title = title[:47] + "..."
-				}
-				fmt.Printf("  [%d/%d] %s", i+1, len(toIndex), title)
-
-				chunks := chunkBookmark(b)
-				if params.Reindex {
-					_ = db.DeleteEmbeddingsForURL(b.URL)
-				}
-
-				stored := 0
-				for _, chunk := range chunks {
-					embedding, err := client.EmbedOne(chunk.text)
-					if err != nil {
-						continue
-					}
-					row := &db.EmbeddingRow{
-						URL:        b.URL,
-						ChunkIndex: chunk.index,
-						ChunkText:  chunk.text,
-						Embedding:  ollama.Float32ToBytes(embedding),
-						Model:      client.Model,
-						CreatedAt:  time.Now(),
-					}
-					if err := db.UpsertEmbedding(row); err != nil {
-						fmt.Printf(" - DB ERROR: %v\n", err)
-						errors++
-						continue
-					}
-					stored++
-				}
-				totalChunks += stored
-				fmt.Printf(" - %d chunks\n", stored)
-			}
-
-			fmt.Printf("\nDone in %v: %d bookmarks, %d chunks, %d errors\n",
-				time.Since(start).Round(time.Millisecond), len(toIndex)-errors, totalChunks, errors)
+			Run(params.URL, params.Model, params.Profile, params.MaxAge, params.Reindex)
 		},
 	}.ToCobra()
+}
+
+func Run(url, model, profile, maxAge string, reindex bool) {
+	client := ollama.NewClient(url, model)
+
+	// Test connection
+	if _, err := client.EmbedOne("test"); err != nil {
+		fmt.Fprintf(os.Stderr, "Error connecting to Ollama: %v\n", err)
+		fmt.Fprintf(os.Stderr, "\nMake sure Ollama is running:\n")
+		fmt.Fprintf(os.Stderr, "  brew services start ollama\n")
+		fmt.Fprintf(os.Stderr, "  ollama pull %s\n", model)
+		os.Exit(1)
+	}
+
+	var bookmarks []db.Bookmark
+	var err error
+	if profile != "" {
+		bookmarks, err = db.ListBookmarksBySource(profile)
+	} else {
+		bookmarks, err = db.ListBookmarks()
+	}
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	if len(bookmarks) == 0 {
+		fmt.Println("No bookmarks. Run 'bm import' first.")
+		return
+	}
+
+	// Apply age cutoff
+	cutoff := parseDuration(maxAge)
+	if cutoff > 0 {
+		cutoffTime := time.Now().Add(-cutoff)
+		var filtered []db.Bookmark
+		skipped := 0
+		for _, b := range bookmarks {
+			age := bookmarkAge(b)
+			if !age.IsZero() && age.Before(cutoffTime) {
+				skipped++
+				continue
+			}
+			filtered = append(filtered, b)
+		}
+		if skipped > 0 {
+			fmt.Printf("Skipped %d bookmarks older than %s\n", skipped, maxAge)
+		}
+		bookmarks = filtered
+	}
+
+	// Check what's already indexed
+	embeddedURLs, err := db.ListEmbeddedURLs()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	if reindex {
+		embeddedURLs = make(map[string]time.Time)
+	}
+
+	var toIndex []db.Bookmark
+	for _, b := range bookmarks {
+		if _, exists := embeddedURLs[b.URL]; !exists {
+			toIndex = append(toIndex, b)
+		}
+	}
+
+	if len(toIndex) == 0 {
+		fmt.Printf("All %d bookmarks already indexed.\n", len(bookmarks))
+		return
+	}
+
+	fmt.Printf("Indexing %d bookmarks (%d already indexed)...\n",
+		len(toIndex), len(bookmarks)-len(toIndex))
+
+	start := time.Now()
+	totalChunks := 0
+	errors := 0
+
+	for i, b := range toIndex {
+		title := b.Title
+		if len(title) > 50 {
+			title = title[:47] + "..."
+		}
+		fmt.Printf("  [%d/%d] %s", i+1, len(toIndex), title)
+
+		chunks := chunkBookmark(b)
+		if reindex {
+			_ = db.DeleteEmbeddingsForURL(b.URL)
+		}
+
+		stored := 0
+		for _, chunk := range chunks {
+			embedding, err := client.EmbedOne(chunk.text)
+			if err != nil {
+				continue
+			}
+			row := &db.EmbeddingRow{
+				URL:        b.URL,
+				ChunkIndex: chunk.index,
+				ChunkText:  chunk.text,
+				Embedding:  ollama.Float32ToBytes(embedding),
+				Model:      client.Model,
+				CreatedAt:  time.Now(),
+			}
+			if err := db.UpsertEmbedding(row); err != nil {
+				fmt.Printf(" - DB ERROR: %v\n", err)
+				errors++
+				continue
+			}
+			stored++
+		}
+		totalChunks += stored
+		fmt.Printf(" - %d chunks\n", stored)
+	}
+
+	fmt.Printf("\nDone in %v: %d bookmarks, %d chunks, %d errors\n",
+		time.Since(start).Round(time.Millisecond), len(toIndex)-errors, totalChunks, errors)
 }
 
 type chunk struct {

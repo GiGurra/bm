@@ -32,106 +32,110 @@ func Cmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(params *Params, cmd *cobra.Command, args []string) {
-			var bookmarks []db.Bookmark
-			var err error
-
-			if params.All {
-				if params.Profile != "" {
-					bookmarks, err = db.ListBookmarksBySource(params.Profile)
-				} else {
-					bookmarks, err = db.ListBookmarks()
-				}
-			} else {
-				if params.Profile != "" {
-					bookmarks, err = db.ListFetchableBySource(params.Profile)
-				} else {
-					bookmarks, err = db.ListFetchable()
-				}
-			}
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-				os.Exit(1)
-			}
-
-			// Apply age cutoff
-			cutoff := parseDuration(params.MaxAge)
-			if cutoff > 0 {
-				cutoffTime := time.Now().Add(-cutoff)
-				var filtered []db.Bookmark
-				skipped := 0
-				for _, b := range bookmarks {
-					age := bookmarkAge(b)
-					if !age.IsZero() && age.Before(cutoffTime) {
-						skipped++
-						continue
-					}
-					filtered = append(filtered, b)
-				}
-				if skipped > 0 {
-					fmt.Printf("Skipped %d bookmarks older than %s\n", skipped, params.MaxAge)
-				}
-				bookmarks = filtered
-			}
-
-			if len(bookmarks) == 0 {
-				fmt.Println("No bookmarks to fetch.")
-				return
-			}
-
-			if params.Limit > 0 && params.Limit < len(bookmarks) {
-				bookmarks = bookmarks[:params.Limit]
-			}
-
-			fmt.Printf("Fetching %d bookmarks...\n", len(bookmarks))
-
-			fetched := 0
-			errors := 0
-			skippedUnfetchable := 0
-			start := time.Now()
-
-			for i, b := range bookmarks {
-				title := b.Title
-				if len(title) > 50 {
-					title = title[:47] + "..."
-				}
-				fmt.Printf("  [%d/%d] %s", i+1, len(bookmarks), title)
-
-				text, err := fetcher.FetchText(b.URL)
-				if err != nil {
-					errStr := err.Error()
-					status := classifyError(errStr)
-					fmt.Printf(" - %s\n", status)
-					_ = db.UpdateFetchStatus(b.URL, status)
-					errors++
-					skippedUnfetchable++
-					continue
-				}
-
-				if text == "" {
-					fmt.Printf(" - empty content\n")
-					_ = db.UpdateFetchStatus(b.URL, "error:empty")
-					errors++
-					continue
-				}
-
-				if err := db.UpdateContent(b.URL, text); err != nil {
-					fmt.Printf(" - DB ERROR: %v\n", err)
-					errors++
-					continue
-				}
-
-				fmt.Printf(" - %d chars\n", len(text))
-				fetched++
-
-				if params.Delay > 0 && i < len(bookmarks)-1 {
-					time.Sleep(time.Duration(params.Delay) * time.Millisecond)
-				}
-			}
-
-			fmt.Printf("\nDone in %v: %d fetched, %d errors (%d marked unfetchable)\n",
-				time.Since(start).Round(time.Millisecond), fetched, errors, skippedUnfetchable)
+			Run(params.Profile, params.MaxAge, params.All, params.Limit, params.Delay)
 		},
 	}.ToCobra()
+}
+
+func Run(profile, maxAge string, all bool, limit, delay int) {
+	var bookmarks []db.Bookmark
+	var err error
+
+	if all {
+		if profile != "" {
+			bookmarks, err = db.ListBookmarksBySource(profile)
+		} else {
+			bookmarks, err = db.ListBookmarks()
+		}
+	} else {
+		if profile != "" {
+			bookmarks, err = db.ListFetchableBySource(profile)
+		} else {
+			bookmarks, err = db.ListFetchable()
+		}
+	}
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Apply age cutoff
+	cutoff := parseDuration(maxAge)
+	if cutoff > 0 {
+		cutoffTime := time.Now().Add(-cutoff)
+		var filtered []db.Bookmark
+		skipped := 0
+		for _, b := range bookmarks {
+			age := bookmarkAge(b)
+			if !age.IsZero() && age.Before(cutoffTime) {
+				skipped++
+				continue
+			}
+			filtered = append(filtered, b)
+		}
+		if skipped > 0 {
+			fmt.Printf("Skipped %d bookmarks older than %s\n", skipped, maxAge)
+		}
+		bookmarks = filtered
+	}
+
+	if len(bookmarks) == 0 {
+		fmt.Println("No bookmarks to fetch.")
+		return
+	}
+
+	if limit > 0 && limit < len(bookmarks) {
+		bookmarks = bookmarks[:limit]
+	}
+
+	fmt.Printf("Fetching %d bookmarks...\n", len(bookmarks))
+
+	fetched := 0
+	errors := 0
+	skippedUnfetchable := 0
+	start := time.Now()
+
+	for i, b := range bookmarks {
+		title := b.Title
+		if len(title) > 50 {
+			title = title[:47] + "..."
+		}
+		fmt.Printf("  [%d/%d] %s", i+1, len(bookmarks), title)
+
+		text, err := fetcher.FetchText(b.URL)
+		if err != nil {
+			errStr := err.Error()
+			status := classifyError(errStr)
+			fmt.Printf(" - %s\n", status)
+			_ = db.UpdateFetchStatus(b.URL, status)
+			errors++
+			skippedUnfetchable++
+			continue
+		}
+
+		if text == "" {
+			fmt.Printf(" - empty content\n")
+			_ = db.UpdateFetchStatus(b.URL, "error:empty")
+			errors++
+			continue
+		}
+
+		if err := db.UpdateContent(b.URL, text); err != nil {
+			fmt.Printf(" - DB ERROR: %v\n", err)
+			errors++
+			continue
+		}
+
+		fmt.Printf(" - %d chars\n", len(text))
+		fetched++
+
+		if delay > 0 && i < len(bookmarks)-1 {
+			time.Sleep(time.Duration(delay) * time.Millisecond)
+		}
+	}
+
+	fmt.Printf("\nDone in %v: %d fetched, %d errors (%d marked unfetchable)\n",
+		time.Since(start).Round(time.Millisecond), fetched, errors, skippedUnfetchable)
 }
 
 func profileAlternatives(_ *cobra.Command, _ []string, toComplete string) []string {
