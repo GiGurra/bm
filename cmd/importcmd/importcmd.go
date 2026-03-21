@@ -3,6 +3,7 @@ package importcmd
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/gigurra/bm/pkg/chrome"
@@ -21,6 +22,11 @@ func Cmd() *cobra.Command {
 		Use:   "import",
 		Short: "Import bookmarks from Chrome",
 		Long:  "Reads Chrome's Bookmarks JSON file and imports URLs into the database.",
+		InitFuncCtx: func(ctx *boa.HookContext, params *Params, cmd *cobra.Command) error {
+			ctx.GetParam(&params.Profile).SetAlternativesFunc(profileAlternatives)
+			ctx.GetParam(&params.Profile).SetStrictAlts(false)
+			return nil
+		},
 		RunFunc: func(params *Params, cmd *cobra.Command, args []string) {
 			if params.Path != "" {
 				importFile(params.Path)
@@ -114,6 +120,22 @@ func importProfile(p chrome.Profile) int {
 	fmt.Printf("Imported from %s: %d new, %d updated, %d unchanged (total %d)\n",
 		sourceName, inserted, updated, unchanged, total)
 	return inserted + updated
+}
+
+func profileAlternatives(_ *cobra.Command, _ []string, toComplete string) []string {
+	profiles, err := chrome.DiscoverProfiles()
+	if err != nil {
+		return nil
+	}
+	var alts []string
+	for _, p := range profiles {
+		for _, candidate := range []string{p.UserName, p.SourceID(), p.DirName} {
+			if candidate != "" && strings.HasPrefix(strings.ToLower(candidate), strings.ToLower(toComplete)) {
+				alts = append(alts, candidate)
+			}
+		}
+	}
+	return alts
 }
 
 func importFile(path string) int {

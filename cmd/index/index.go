@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/GiGurra/boa/pkg/boa"
+	"github.com/gigurra/bm/pkg/chrome"
 	"github.com/gigurra/bm/pkg/db"
 	"github.com/gigurra/bm/pkg/ollama"
 	"github.com/spf13/cobra"
@@ -19,6 +20,7 @@ type Params struct {
 	Model   string `long:"model" env:"BM_EMBED_MODEL" help:"Embedding model" default:"qwen3-embedding:0.6b"`
 	URL     string `long:"url" env:"BM_OLLAMA_URL" help:"Ollama API base URL" default:"http://localhost:11434"`
 	MaxAge  string `long:"max-age" help:"Skip bookmarks older than this (e.g. 1y, 6m, 90d)" default:"1y"`
+	Profile string `short:"p" optional:"true" help:"Filter by profile (name, email, or source ID)"`
 }
 
 func Cmd() *cobra.Command {
@@ -26,6 +28,11 @@ func Cmd() *cobra.Command {
 		Use:   "index",
 		Short: "Build semantic search index using local embeddings",
 		Long:  "Generates embeddings via Ollama for bookmarks that have fetched content.",
+		InitFuncCtx: func(ctx *boa.HookContext, params *Params, cmd *cobra.Command) error {
+			ctx.GetParam(&params.Profile).SetAlternativesFunc(profileAlternatives)
+			ctx.GetParam(&params.Profile).SetStrictAlts(false)
+			return nil
+		},
 		RunFunc: func(params *Params, cmd *cobra.Command, args []string) {
 			client := ollama.NewClient(params.URL, params.Model)
 
@@ -38,7 +45,13 @@ func Cmd() *cobra.Command {
 				os.Exit(1)
 			}
 
-			bookmarks, err := db.ListBookmarks()
+			var bookmarks []db.Bookmark
+			var err error
+			if params.Profile != "" {
+				bookmarks, err = db.ListBookmarksBySource(params.Profile)
+			} else {
+				bookmarks, err = db.ListBookmarks()
+			}
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 				os.Exit(1)
@@ -219,4 +232,20 @@ func parseDuration(s string) time.Duration {
 	default:
 		return 0
 	}
+}
+
+func profileAlternatives(_ *cobra.Command, _ []string, toComplete string) []string {
+	profiles, err := chrome.DiscoverProfiles()
+	if err != nil {
+		return nil
+	}
+	var alts []string
+	for _, p := range profiles {
+		for _, candidate := range []string{p.UserName, p.SourceID(), p.DirName} {
+			if candidate != "" && strings.HasPrefix(strings.ToLower(candidate), strings.ToLower(toComplete)) {
+				alts = append(alts, candidate)
+			}
+		}
+	}
+	return alts
 }
