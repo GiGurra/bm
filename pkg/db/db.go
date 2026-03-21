@@ -59,24 +59,76 @@ func OpenMem() (*sql.DB, error) {
 	return db, nil
 }
 
+const currentSchemaVersion = 2
+
 func migrate(db *sql.DB) error {
+	// Ensure schema_version table exists
+	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL)`); err != nil {
+		return fmt.Errorf("create schema_version table: %w", err)
+	}
+
+	var version int
+	err := db.QueryRow(`SELECT version FROM schema_version`).Scan(&version)
+	if err == sql.ErrNoRows {
+		// Check if this is truly a fresh DB or a pre-versioning DB
+		var tableCount int
+		_ = db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='bookmarks'`).Scan(&tableCount)
+		if tableCount > 0 {
+			version = 1 // existing DB from before versioning
+		}
+		_, _ = db.Exec(`INSERT INTO schema_version (version) VALUES (?)`, version)
+	} else if err != nil {
+		return fmt.Errorf("read schema version: %w", err)
+	}
+
+	// Apply migrations in order
+	for version < currentSchemaVersion {
+		nextVersion := version + 1
+		if err := applyMigration(db, nextVersion); err != nil {
+			return fmt.Errorf("migration to v%d: %w", nextVersion, err)
+		}
+		if _, err := db.Exec(`UPDATE schema_version SET version = ?`, nextVersion); err != nil {
+			return fmt.Errorf("update schema version to %d: %w", nextVersion, err)
+		}
+		version = nextVersion
+	}
+
+	return nil
+}
+
+func applyMigration(db *sql.DB, version int) error {
+	switch version {
+	case 1:
+		return migrateV1(db)
+	case 2:
+		return migrateV2(db)
+	default:
+		return fmt.Errorf("unknown migration version %d", version)
+	}
+}
+
+// migrateV1 creates the initial schema (for fresh databases).
+func migrateV1(db *sql.DB) error {
 	stmts := []string{
 		`CREATE TABLE IF NOT EXISTS bookmarks (
-			url TEXT PRIMARY KEY,
+			url TEXT NOT NULL DEFAULT '',
 			title TEXT NOT NULL DEFAULT '',
 			folder_path TEXT NOT NULL DEFAULT '',
 			source TEXT NOT NULL DEFAULT 'chrome',
+			source_name TEXT NOT NULL DEFAULT '',
 			content_text TEXT NOT NULL DEFAULT '',
 			fetched_at TEXT NOT NULL DEFAULT '',
+			fetch_status TEXT NOT NULL DEFAULT '',
 			added_at TEXT NOT NULL DEFAULT '',
-			updated_at TEXT NOT NULL DEFAULT ''
+			updated_at TEXT NOT NULL DEFAULT '',
+			chrome_added_at TEXT NOT NULL DEFAULT '',
+			PRIMARY KEY (url, folder_path, source)
 		)`,
 		`CREATE VIRTUAL TABLE IF NOT EXISTS bookmarks_fts USING fts5(
 			url, title, content_text,
 			content='bookmarks',
 			content_rowid='rowid'
 		)`,
-		// Triggers to keep FTS in sync
 		`CREATE TRIGGER IF NOT EXISTS bookmarks_ai AFTER INSERT ON bookmarks BEGIN
 			INSERT INTO bookmarks_fts(rowid, url, title, content_text)
 			VALUES (new.rowid, new.url, new.title, new.content_text);
@@ -101,25 +153,66 @@ func migrate(db *sql.DB) error {
 			PRIMARY KEY (url, chunk_index)
 		)`,
 	}
-
 	for _, stmt := range stmts {
 		if _, err := db.Exec(stmt); err != nil {
-			return fmt.Errorf("migrate: %w\n  SQL: %s", err, stmt)
+			return fmt.Errorf("%w\n  SQL: %s", err, stmt)
 		}
 	}
+	return nil
+}
 
-	// Incremental migrations for columns added after initial schema
-	alterStmts := []string{
-		// fetch_status: "" (not attempted), "ok", "error:404", "error:403", "error:timeout", etc.
-		`ALTER TABLE bookmarks ADD COLUMN fetch_status TEXT NOT NULL DEFAULT ''`,
-		// chrome_added_at: original Chrome bookmark creation time (for age filtering)
-		`ALTER TABLE bookmarks ADD COLUMN chrome_added_at TEXT NOT NULL DEFAULT ''`,
-		// source_name: human-readable name for the source (e.g. profile email)
-		`ALTER TABLE bookmarks ADD COLUMN source_name TEXT NOT NULL DEFAULT ''`,
+// migrateV2 changes the bookmarks PK from (url) to (url, folder_path, source).
+func migrateV2(db *sql.DB) error {
+	stmts := []string{
+		`DROP TRIGGER IF EXISTS bookmarks_ai`,
+		`DROP TRIGGER IF EXISTS bookmarks_ad`,
+		`DROP TRIGGER IF EXISTS bookmarks_au`,
+		`DROP TABLE IF EXISTS bookmarks_fts`,
+		`CREATE TABLE bookmarks_new (
+			url TEXT NOT NULL DEFAULT '',
+			title TEXT NOT NULL DEFAULT '',
+			folder_path TEXT NOT NULL DEFAULT '',
+			source TEXT NOT NULL DEFAULT 'chrome',
+			source_name TEXT NOT NULL DEFAULT '',
+			content_text TEXT NOT NULL DEFAULT '',
+			fetched_at TEXT NOT NULL DEFAULT '',
+			fetch_status TEXT NOT NULL DEFAULT '',
+			added_at TEXT NOT NULL DEFAULT '',
+			updated_at TEXT NOT NULL DEFAULT '',
+			chrome_added_at TEXT NOT NULL DEFAULT '',
+			PRIMARY KEY (url, folder_path, source)
+		)`,
+		`INSERT OR IGNORE INTO bookmarks_new (url, title, folder_path, source, source_name, content_text, fetched_at, fetch_status, added_at, updated_at, chrome_added_at)
+			SELECT url, title, folder_path, source, source_name, content_text, fetched_at, fetch_status, added_at, updated_at, chrome_added_at FROM bookmarks`,
+		`DROP TABLE bookmarks`,
+		`ALTER TABLE bookmarks_new RENAME TO bookmarks`,
+		// Recreate FTS and triggers
+		`CREATE VIRTUAL TABLE IF NOT EXISTS bookmarks_fts USING fts5(
+			url, title, content_text,
+			content='bookmarks',
+			content_rowid='rowid'
+		)`,
+		`CREATE TRIGGER IF NOT EXISTS bookmarks_ai AFTER INSERT ON bookmarks BEGIN
+			INSERT INTO bookmarks_fts(rowid, url, title, content_text)
+			VALUES (new.rowid, new.url, new.title, new.content_text);
+		END`,
+		`CREATE TRIGGER IF NOT EXISTS bookmarks_ad AFTER DELETE ON bookmarks BEGIN
+			INSERT INTO bookmarks_fts(bookmarks_fts, rowid, url, title, content_text)
+			VALUES ('delete', old.rowid, old.url, old.title, old.content_text);
+		END`,
+		`CREATE TRIGGER IF NOT EXISTS bookmarks_au AFTER UPDATE ON bookmarks BEGIN
+			INSERT INTO bookmarks_fts(bookmarks_fts, rowid, url, title, content_text)
+			VALUES ('delete', old.rowid, old.url, old.title, old.content_text);
+			INSERT INTO bookmarks_fts(rowid, url, title, content_text)
+			VALUES (new.rowid, new.url, new.title, new.content_text);
+		END`,
+		// Rebuild FTS index from existing data
+		`INSERT INTO bookmarks_fts(bookmarks_fts) VALUES('rebuild')`,
 	}
-	for _, stmt := range alterStmts {
-		_, _ = db.Exec(stmt) // ignore "duplicate column" errors
+	for _, stmt := range stmts {
+		if _, err := db.Exec(stmt); err != nil {
+			return fmt.Errorf("%w\n  SQL: %s", err, stmt)
+		}
 	}
-
 	return nil
 }

@@ -218,6 +218,169 @@ func TestCountBookmarks(t *testing.T) {
 	}
 }
 
+func TestBulkUpsert_FreshDB(t *testing.T) {
+	setupTestDB(t)
+
+	bookmarks := []*Bookmark{
+		{URL: "https://a.com", Title: "A", FolderPath: "bar", Source: "chrome", ChromeAddedAt: "2020-01-01T00:00:00Z"},
+		{URL: "https://b.com", Title: "B", FolderPath: "bar", Source: "chrome", ChromeAddedAt: "2020-02-01T00:00:00Z"},
+		{URL: "https://c.com", Title: "C", FolderPath: "other", Source: "chrome", ChromeAddedAt: "2020-03-01T00:00:00Z"},
+	}
+
+	inserted, updated, total, err := BulkUpsertBookmarks(bookmarks)
+	if err != nil {
+		t.Fatalf("BulkUpsertBookmarks: %v", err)
+	}
+	if inserted != 3 || updated != 0 || total != 3 {
+		t.Errorf("expected 3/0/3, got %d/%d/%d", inserted, updated, total)
+	}
+
+	all, _ := ListBookmarks()
+	if len(all) != 3 {
+		t.Fatalf("expected 3 in DB, got %d", len(all))
+	}
+}
+
+func TestBulkUpsert_Idempotent(t *testing.T) {
+	setupTestDB(t)
+
+	bookmarks := []*Bookmark{
+		{URL: "https://a.com", Title: "A", FolderPath: "bar", Source: "chrome", ChromeAddedAt: "2020-01-01T00:00:00Z"},
+		{URL: "https://b.com", Title: "B", FolderPath: "bar", Source: "chrome", ChromeAddedAt: "2020-02-01T00:00:00Z"},
+	}
+
+	BulkUpsertBookmarks(bookmarks)
+
+	// Second import with same data
+	inserted, updated, total, err := BulkUpsertBookmarks(bookmarks)
+	if err != nil {
+		t.Fatalf("BulkUpsertBookmarks: %v", err)
+	}
+	if inserted != 0 || updated != 0 || total != 2 {
+		t.Errorf("expected 0/0/2, got %d/%d/%d", inserted, updated, total)
+	}
+}
+
+func TestBulkUpsert_DetectsChanges(t *testing.T) {
+	setupTestDB(t)
+
+	bookmarks := []*Bookmark{
+		{URL: "https://a.com", Title: "A", FolderPath: "bar", Source: "chrome"},
+		{URL: "https://b.com", Title: "B", FolderPath: "bar", Source: "chrome"},
+	}
+	BulkUpsertBookmarks(bookmarks)
+
+	// Change title of one
+	bookmarks[0].Title = "A Updated"
+
+	inserted, updated, total, err := BulkUpsertBookmarks(bookmarks)
+	if err != nil {
+		t.Fatalf("BulkUpsertBookmarks: %v", err)
+	}
+	if inserted != 0 || updated != 1 || total != 2 {
+		t.Errorf("expected 0/1/2, got %d/%d/%d", inserted, updated, total)
+	}
+}
+
+func TestBulkUpsert_CompositeKey(t *testing.T) {
+	setupTestDB(t)
+
+	// Same URL in different folders = different entries
+	bookmarks := []*Bookmark{
+		{URL: "https://a.com", Title: "A in bar", FolderPath: "bar", Source: "chrome"},
+		{URL: "https://a.com", Title: "A in other", FolderPath: "other", Source: "chrome"},
+	}
+
+	inserted, updated, total, err := BulkUpsertBookmarks(bookmarks)
+	if err != nil {
+		t.Fatalf("BulkUpsertBookmarks: %v", err)
+	}
+	if inserted != 2 || updated != 0 || total != 2 {
+		t.Errorf("expected 2/0/2, got %d/%d/%d", inserted, updated, total)
+	}
+
+	all, _ := ListBookmarks()
+	if len(all) != 2 {
+		t.Fatalf("expected 2 in DB, got %d", len(all))
+	}
+}
+
+func TestBulkUpsert_DedupKeepsLatest(t *testing.T) {
+	setupTestDB(t)
+
+	// Duplicate composite key — should keep the one with latest chrome_added_at
+	bookmarks := []*Bookmark{
+		{URL: "https://a.com", Title: "Old Title", FolderPath: "bar", Source: "chrome", ChromeAddedAt: "2020-01-01T00:00:00Z"},
+		{URL: "https://a.com", Title: "New Title", FolderPath: "bar", Source: "chrome", ChromeAddedAt: "2022-06-15T00:00:00Z"},
+		{URL: "https://b.com", Title: "B", FolderPath: "bar", Source: "chrome", ChromeAddedAt: "2021-01-01T00:00:00Z"},
+	}
+
+	inserted, _, total, err := BulkUpsertBookmarks(bookmarks)
+	if err != nil {
+		t.Fatalf("BulkUpsertBookmarks: %v", err)
+	}
+	if inserted != 2 || total != 2 {
+		t.Errorf("expected 2 inserted, 2 total, got %d/%d", inserted, total)
+	}
+
+	all, _ := ListBookmarks()
+	if len(all) != 2 {
+		t.Fatalf("expected 2 in DB, got %d", len(all))
+	}
+
+	// Verify the latest one won
+	for _, b := range all {
+		if b.URL == "https://a.com" {
+			if b.Title != "New Title" {
+				t.Errorf("expected 'New Title' (latest), got %q", b.Title)
+			}
+			if b.ChromeAddedAt != "2022-06-15T00:00:00Z" {
+				t.Errorf("expected latest chrome_added_at, got %q", b.ChromeAddedAt)
+			}
+		}
+	}
+}
+
+func TestBulkUpsert_PreservesContent(t *testing.T) {
+	setupTestDB(t)
+
+	bookmarks := []*Bookmark{
+		{URL: "https://a.com", Title: "A", FolderPath: "bar", Source: "chrome"},
+	}
+	BulkUpsertBookmarks(bookmarks)
+	UpdateContent("https://a.com", "fetched page content")
+
+	// Re-import should not overwrite content
+	bookmarks[0].Title = "A Updated"
+	BulkUpsertBookmarks(bookmarks)
+
+	all, _ := ListBookmarks()
+	if all[0].ContentText != "fetched page content" {
+		t.Errorf("content was overwritten: %q", all[0].ContentText)
+	}
+	if all[0].Title != "A Updated" {
+		t.Errorf("title not updated: %q", all[0].Title)
+	}
+}
+
+func TestBulkUpsert_MultiSource(t *testing.T) {
+	setupTestDB(t)
+
+	// Same URL+folder from different sources = different entries
+	bookmarks := []*Bookmark{
+		{URL: "https://a.com", Title: "A", FolderPath: "bar", Source: "chrome:profile1"},
+		{URL: "https://a.com", Title: "A", FolderPath: "bar", Source: "chrome:profile2"},
+	}
+
+	inserted, updated, total, err := BulkUpsertBookmarks(bookmarks)
+	if err != nil {
+		t.Fatalf("BulkUpsertBookmarks: %v", err)
+	}
+	if inserted != 2 || updated != 0 || total != 2 {
+		t.Errorf("expected 2/0/2, got %d/%d/%d", inserted, updated, total)
+	}
+}
+
 func TestEmbeddingCRUD(t *testing.T) {
 	setupTestDB(t)
 

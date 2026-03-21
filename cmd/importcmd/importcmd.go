@@ -92,25 +92,28 @@ func importProfile(p chrome.Profile) int {
 	sourceID := p.SourceID()
 	sourceName := p.DisplayName()
 
-	imported := 0
-	for _, b := range bookmarks {
-		err := db.UpsertBookmark(&db.Bookmark{
+	dbBookmarks := make([]*db.Bookmark, len(bookmarks))
+	for i, b := range bookmarks {
+		dbBookmarks[i] = &db.Bookmark{
 			URL:           b.URL,
 			Title:         b.Title,
 			FolderPath:    b.FolderPath,
 			Source:        sourceID,
 			SourceName:    sourceName,
 			ChromeAddedAt: b.DateAdded,
-		})
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error importing %s: %v\n", b.URL, err)
-			continue
 		}
-		imported++
 	}
 
-	fmt.Printf("Imported %d bookmarks from %s\n", imported, sourceName)
-	return imported
+	inserted, updated, total, err := db.BulkUpsertBookmarks(dbBookmarks)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error importing from %s: %v\n", sourceName, err)
+		return 0
+	}
+
+	unchanged := total - inserted - updated
+	fmt.Printf("Imported from %s: %d new, %d updated, %d unchanged (total %d)\n",
+		sourceName, inserted, updated, unchanged, total)
+	return inserted + updated
 }
 
 func importFile(path string) int {
@@ -120,22 +123,25 @@ func importFile(path string) int {
 		return 0
 	}
 
-	imported := 0
-	for _, b := range bookmarks {
-		err := db.UpsertBookmark(&db.Bookmark{
+	dbBookmarks := make([]*db.Bookmark, len(bookmarks))
+	for i, b := range bookmarks {
+		dbBookmarks[i] = &db.Bookmark{
 			URL:           b.URL,
 			Title:         b.Title,
 			FolderPath:    b.FolderPath,
 			Source:        "chrome:file",
 			ChromeAddedAt: b.DateAdded,
-		})
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error importing %s: %v\n", b.URL, err)
-			continue
 		}
-		imported++
 	}
 
-	fmt.Printf("Imported %d bookmarks from %s\n", imported, path)
-	return imported
+	inserted, updated, total, err := db.BulkUpsertBookmarks(dbBookmarks)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error importing from %s: %v\n", path, err)
+		return 0
+	}
+
+	unchanged := total - inserted - updated
+	fmt.Printf("Imported from %s: %d new, %d updated, %d unchanged (total %d)\n",
+		path, inserted, updated, unchanged, total)
+	return inserted + updated
 }

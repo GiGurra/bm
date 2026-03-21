@@ -1,6 +1,7 @@
 package db
 
 import (
+	"fmt"
 	"time"
 )
 
@@ -16,6 +17,12 @@ type Bookmark struct {
 	AddedAt       string
 	UpdatedAt     string
 	ChromeAddedAt string // original Chrome bookmark creation time
+}
+
+type bookmarkKey struct {
+	URL        string
+	FolderPath string
+	Source     string
 }
 
 // UpsertBookmark inserts or updates a bookmark. Does NOT overwrite content_text,
@@ -34,15 +41,110 @@ func UpsertBookmark(b *Bookmark) error {
 
 	_, err = db.Exec(`INSERT INTO bookmarks (url, title, folder_path, source, source_name, content_text, fetched_at, fetch_status, added_at, updated_at, chrome_added_at)
 		VALUES (?, ?, ?, ?, ?, '', '', '', ?, ?, ?)
-		ON CONFLICT(url) DO UPDATE SET
+		ON CONFLICT(url, folder_path, source) DO UPDATE SET
 			title=excluded.title,
-			folder_path=excluded.folder_path,
-			source=excluded.source,
 			source_name=CASE WHEN excluded.source_name != '' THEN excluded.source_name ELSE bookmarks.source_name END,
 			updated_at=excluded.updated_at,
 			chrome_added_at=CASE WHEN excluded.chrome_added_at != '' THEN excluded.chrome_added_at ELSE bookmarks.chrome_added_at END`,
 		b.URL, b.Title, b.FolderPath, b.Source, b.SourceName, b.AddedAt, b.UpdatedAt, b.ChromeAddedAt)
 	return err
+}
+
+// BulkUpsertBookmarks loads all existing bookmarks into memory, compares with the
+// incoming list, and only writes the ones that are new or changed. All writes happen
+// in a single transaction to avoid per-row fsync overhead.
+func BulkUpsertBookmarks(bookmarks []*Bookmark) (inserted, updated, total int, err error) {
+	db, err := Open()
+	if err != nil {
+		return 0, 0, 0, err
+	}
+
+	// Load existing bookmarks into a map keyed by (url, folder_path, source)
+	existing := make(map[bookmarkKey]Bookmark)
+	rows, err := db.Query(`SELECT url, title, folder_path, source, source_name, chrome_added_at FROM bookmarks`)
+	if err != nil {
+		return 0, 0, 0, fmt.Errorf("load existing bookmarks: %w", err)
+	}
+	for rows.Next() {
+		var b Bookmark
+		if err := rows.Scan(&b.URL, &b.Title, &b.FolderPath, &b.Source, &b.SourceName, &b.ChromeAddedAt); err != nil {
+			rows.Close()
+			return 0, 0, 0, fmt.Errorf("scan existing bookmark: %w", err)
+		}
+		existing[bookmarkKey{b.URL, b.FolderPath, b.Source}] = b
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return 0, 0, 0, fmt.Errorf("iterate existing bookmarks: %w", err)
+	}
+
+	// Deduplicate by composite key, keeping the entry with the latest chrome_added_at
+	deduped := make(map[bookmarkKey]*Bookmark, len(bookmarks))
+	for _, b := range bookmarks {
+		key := bookmarkKey{b.URL, b.FolderPath, b.Source}
+		if prev, exists := deduped[key]; !exists || b.ChromeAddedAt > prev.ChromeAddedAt {
+			deduped[key] = b
+		}
+	}
+	total = len(deduped)
+
+	// Determine which bookmarks need writing
+	now := time.Now().Format(time.RFC3339)
+	var toWrite []*Bookmark
+	for _, b := range deduped {
+		if b.AddedAt == "" {
+			b.AddedAt = now
+		}
+		b.UpdatedAt = now
+
+		key := bookmarkKey{b.URL, b.FolderPath, b.Source}
+		if old, exists := existing[key]; exists {
+			changed := old.Title != b.Title ||
+				(b.SourceName != "" && old.SourceName != b.SourceName) ||
+				(b.ChromeAddedAt != "" && old.ChromeAddedAt != b.ChromeAddedAt)
+			if !changed {
+				continue
+			}
+			updated++
+		} else {
+			inserted++
+		}
+		toWrite = append(toWrite, b)
+	}
+
+	if len(toWrite) == 0 {
+		return 0, 0, total, nil
+	}
+
+	tx, err := db.Begin()
+	if err != nil {
+		return 0, 0, 0, fmt.Errorf("begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	stmt, err := tx.Prepare(`INSERT INTO bookmarks (url, title, folder_path, source, source_name, content_text, fetched_at, fetch_status, added_at, updated_at, chrome_added_at)
+		VALUES (?, ?, ?, ?, ?, '', '', '', ?, ?, ?)
+		ON CONFLICT(url, folder_path, source) DO UPDATE SET
+			title=excluded.title,
+			source_name=CASE WHEN excluded.source_name != '' THEN excluded.source_name ELSE bookmarks.source_name END,
+			updated_at=excluded.updated_at,
+			chrome_added_at=CASE WHEN excluded.chrome_added_at != '' THEN excluded.chrome_added_at ELSE bookmarks.chrome_added_at END`)
+	if err != nil {
+		return 0, 0, 0, fmt.Errorf("prepare statement: %w", err)
+	}
+	defer stmt.Close()
+
+	for _, b := range toWrite {
+		if _, err := stmt.Exec(b.URL, b.Title, b.FolderPath, b.Source, b.SourceName, b.AddedAt, b.UpdatedAt, b.ChromeAddedAt); err != nil {
+			return 0, 0, 0, fmt.Errorf("upsert %s: %w", b.URL, err)
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return 0, 0, 0, fmt.Errorf("commit: %w", err)
+	}
+
+	return inserted, updated, total, nil
 }
 
 // UpdateContent sets the fetched content for a bookmark.
