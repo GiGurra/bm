@@ -11,6 +11,7 @@ import (
 	"github.com/gigurra/bm/cmd/list"
 	"github.com/gigurra/bm/cmd/profile"
 	"github.com/gigurra/bm/cmd/search"
+	"github.com/gigurra/bm/cmd/stats"
 	"github.com/gigurra/bm/cmd/sync"
 	"github.com/spf13/cobra"
 )
@@ -30,6 +31,7 @@ func main() {
 		sync.Cmd(),
 		clear.Cmd(),
 		profile.Cmd(),
+		stats.Cmd(),
 	)
 
 	if err := root.Execute(); err != nil {

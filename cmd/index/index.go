@@ -3,6 +3,7 @@ package index
 import (
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/GiGurra/boa/pkg/boa"
@@ -17,6 +18,7 @@ type Params struct {
 	Reindex bool   `long:"reindex" help:"Force re-index all bookmarks"`
 	Model   string `long:"model" env:"BM_EMBED_MODEL" help:"Embedding model" default:"qwen3-embedding:0.6b"`
 	URL     string `long:"url" env:"BM_OLLAMA_URL" help:"Ollama API base URL" default:"http://localhost:11434"`
+	MaxAge  string `long:"max-age" help:"Skip bookmarks older than this (e.g. 1y, 6m, 90d)" default:"1y"`
 }
 
 func Cmd() *cobra.Command {
@@ -45,6 +47,26 @@ func Cmd() *cobra.Command {
 			if len(bookmarks) == 0 {
 				fmt.Println("No bookmarks. Run 'bm import' first.")
 				return
+			}
+
+			// Apply age cutoff
+			cutoff := parseDuration(params.MaxAge)
+			if cutoff > 0 {
+				cutoffTime := time.Now().Add(-cutoff)
+				var filtered []db.Bookmark
+				skipped := 0
+				for _, b := range bookmarks {
+					age := bookmarkAge(b)
+					if !age.IsZero() && age.Before(cutoffTime) {
+						skipped++
+						continue
+					}
+					filtered = append(filtered, b)
+				}
+				if skipped > 0 {
+					fmt.Printf("Skipped %d bookmarks older than %s\n", skipped, params.MaxAge)
+				}
+				bookmarks = filtered
 			}
 
 			// Check what's already indexed
@@ -149,4 +171,52 @@ func chunkBookmark(b db.Bookmark) []chunk {
 	}
 
 	return chunks
+}
+
+func bookmarkAge(b db.Bookmark) time.Time {
+	if b.ChromeAddedAt != "" {
+		if t, err := time.Parse(time.RFC3339, b.ChromeAddedAt); err == nil {
+			return t
+		}
+	}
+	if b.AddedAt != "" {
+		if t, err := time.Parse(time.RFC3339, b.AddedAt); err == nil {
+			return t
+		}
+	}
+	return time.Time{}
+}
+
+func parseDuration(s string) time.Duration {
+	if s == "" || s == "0" {
+		return 0
+	}
+	s = strings.TrimSpace(strings.ToLower(s))
+	if len(s) < 2 {
+		return 0
+	}
+
+	numStr := s[:len(s)-1]
+	unit := s[len(s)-1]
+
+	var n int
+	for _, c := range numStr {
+		if c < '0' || c > '9' {
+			return 0
+		}
+		n = n*10 + int(c-'0')
+	}
+
+	switch unit {
+	case 'd':
+		return time.Duration(n) * 24 * time.Hour
+	case 'w':
+		return time.Duration(n) * 7 * 24 * time.Hour
+	case 'm':
+		return time.Duration(n) * 30 * 24 * time.Hour
+	case 'y':
+		return time.Duration(n) * 365 * 24 * time.Hour
+	default:
+		return 0
+	}
 }

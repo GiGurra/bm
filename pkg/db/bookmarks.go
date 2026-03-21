@@ -352,6 +352,91 @@ func ListFetchableBySource(sourceFilter string) ([]Bookmark, error) {
 	return scanBookmarks(rows)
 }
 
+// YearStats holds per-year aggregate counts.
+type YearStats struct {
+	Year    string
+	Total   int
+	Fetched int
+	Errors  int
+	Indexed int
+}
+
+// ListYearStats returns aggregate stats grouped by year of chrome_added_at.
+func ListYearStats() ([]YearStats, error) {
+	db, err := Open()
+	if err != nil {
+		return nil, err
+	}
+
+	rows, err := db.Query(`
+		SELECT
+			COALESCE(NULLIF(strftime('%Y', chrome_added_at), ''), '?') as year,
+			COUNT(*) as total,
+			SUM(CASE WHEN fetch_status = 'ok' THEN 1 ELSE 0 END) as fetched,
+			SUM(CASE WHEN fetch_status LIKE 'error:%' THEN 1 ELSE 0 END) as errors,
+			(SELECT COUNT(DISTINCT e.url) FROM bookmark_embeddings e
+			 WHERE e.url IN (SELECT url FROM bookmarks b2
+			   WHERE COALESCE(NULLIF(strftime('%Y', b2.chrome_added_at), ''), '?') =
+			         COALESCE(NULLIF(strftime('%Y', bookmarks.chrome_added_at), ''), '?'))) as indexed
+		FROM bookmarks
+		GROUP BY year
+		ORDER BY year`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var result []YearStats
+	for rows.Next() {
+		var s YearStats
+		if err := rows.Scan(&s.Year, &s.Total, &s.Fetched, &s.Errors, &s.Indexed); err != nil {
+			return nil, err
+		}
+		result = append(result, s)
+	}
+	return result, rows.Err()
+}
+
+// FetchStatusStats holds counts per fetch status category.
+type FetchStatusStats struct {
+	Status string
+	Count  int
+}
+
+// ListFetchStatusStats returns bookmark counts grouped by fetch_status.
+func ListFetchStatusStats() ([]FetchStatusStats, error) {
+	db, err := Open()
+	if err != nil {
+		return nil, err
+	}
+
+	rows, err := db.Query(`
+		SELECT
+			CASE
+				WHEN fetch_status = '' AND fetched_at = '' THEN 'not attempted'
+				WHEN fetch_status = 'ok' THEN 'ok'
+				ELSE fetch_status
+			END as status,
+			COUNT(*) as count
+		FROM bookmarks
+		GROUP BY status
+		ORDER BY count DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var result []FetchStatusStats
+	for rows.Next() {
+		var s FetchStatusStats
+		if err := rows.Scan(&s.Status, &s.Count); err != nil {
+			return nil, err
+		}
+		result = append(result, s)
+	}
+	return result, rows.Err()
+}
+
 func scanBookmarks(rows interface {
 	Next() bool
 	Scan(dest ...any) error
