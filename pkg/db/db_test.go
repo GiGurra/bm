@@ -1,0 +1,287 @@
+package db
+
+import (
+	"testing"
+	"time"
+)
+
+func setupTestDB(t *testing.T) {
+	t.Helper()
+	_, err := OpenMem()
+	if err != nil {
+		t.Fatalf("OpenMem: %v", err)
+	}
+}
+
+func TestUpsertAndListBookmarks(t *testing.T) {
+	setupTestDB(t)
+
+	err := UpsertBookmark(&Bookmark{
+		URL:        "https://example.com",
+		Title:      "Example",
+		FolderPath: "bar/folder",
+		Source:     "chrome",
+	})
+	if err != nil {
+		t.Fatalf("UpsertBookmark: %v", err)
+	}
+
+	err = UpsertBookmark(&Bookmark{
+		URL:        "https://go.dev",
+		Title:      "Go",
+		FolderPath: "bar/dev",
+		Source:     "chrome",
+	})
+	if err != nil {
+		t.Fatalf("UpsertBookmark: %v", err)
+	}
+
+	bookmarks, err := ListBookmarks()
+	if err != nil {
+		t.Fatalf("ListBookmarks: %v", err)
+	}
+	if len(bookmarks) != 2 {
+		t.Fatalf("expected 2, got %d", len(bookmarks))
+	}
+}
+
+func TestUpsertBookmark_UpdatesTitle(t *testing.T) {
+	setupTestDB(t)
+
+	_ = UpsertBookmark(&Bookmark{URL: "https://example.com", Title: "Old Title", Source: "chrome"})
+	_ = UpsertBookmark(&Bookmark{URL: "https://example.com", Title: "New Title", Source: "chrome"})
+
+	bookmarks, _ := ListBookmarks()
+	if len(bookmarks) != 1 {
+		t.Fatalf("expected 1 (upsert), got %d", len(bookmarks))
+	}
+	if bookmarks[0].Title != "New Title" {
+		t.Errorf("expected 'New Title', got %q", bookmarks[0].Title)
+	}
+}
+
+func TestUpsertBookmark_PreservesContent(t *testing.T) {
+	setupTestDB(t)
+
+	_ = UpsertBookmark(&Bookmark{URL: "https://example.com", Title: "Example", Source: "chrome"})
+	_ = UpdateContent("https://example.com", "page content here")
+
+	// Re-import should NOT overwrite content
+	_ = UpsertBookmark(&Bookmark{URL: "https://example.com", Title: "Example Updated", Source: "chrome"})
+
+	bookmarks, _ := ListBookmarks()
+	if bookmarks[0].ContentText != "page content here" {
+		t.Errorf("content was overwritten: %q", bookmarks[0].ContentText)
+	}
+	if bookmarks[0].Title != "Example Updated" {
+		t.Errorf("title not updated: %q", bookmarks[0].Title)
+	}
+}
+
+func TestUpdateContent(t *testing.T) {
+	setupTestDB(t)
+
+	_ = UpsertBookmark(&Bookmark{URL: "https://example.com", Title: "Example", Source: "chrome"})
+	_ = UpdateContent("https://example.com", "hello world content")
+
+	bookmarks, _ := ListBookmarks()
+	if bookmarks[0].ContentText != "hello world content" {
+		t.Errorf("unexpected content: %q", bookmarks[0].ContentText)
+	}
+	if bookmarks[0].FetchedAt == "" {
+		t.Error("fetched_at should be set")
+	}
+}
+
+func TestListFetchable(t *testing.T) {
+	setupTestDB(t)
+
+	_ = UpsertBookmark(&Bookmark{URL: "https://a.com", Title: "A", Source: "chrome"})
+	_ = UpsertBookmark(&Bookmark{URL: "https://b.com", Title: "B", Source: "chrome"})
+	_ = UpsertBookmark(&Bookmark{URL: "https://c.com", Title: "C", Source: "chrome"})
+	_ = UpdateContent("https://a.com", "fetched content")
+	_ = UpdateFetchStatus("https://c.com", "error:404")
+
+	fetchable, err := ListFetchable()
+	if err != nil {
+		t.Fatalf("ListFetchable: %v", err)
+	}
+	if len(fetchable) != 1 {
+		t.Fatalf("expected 1 fetchable, got %d", len(fetchable))
+	}
+	if fetchable[0].URL != "https://b.com" {
+		t.Errorf("expected b.com, got %s", fetchable[0].URL)
+	}
+}
+
+func TestUpdateFetchStatus(t *testing.T) {
+	setupTestDB(t)
+
+	_ = UpsertBookmark(&Bookmark{URL: "https://gone.com", Title: "Gone", Source: "chrome"})
+	_ = UpdateFetchStatus("https://gone.com", "error:404")
+
+	bookmarks, _ := ListBookmarks()
+	if bookmarks[0].FetchStatus != "error:404" {
+		t.Errorf("expected 'error:404', got %q", bookmarks[0].FetchStatus)
+	}
+	if bookmarks[0].FetchedAt == "" {
+		t.Error("fetched_at should be set even for errors")
+	}
+}
+
+func TestChromeAddedAt(t *testing.T) {
+	setupTestDB(t)
+
+	_ = UpsertBookmark(&Bookmark{URL: "https://example.com", Title: "Ex", Source: "chrome", ChromeAddedAt: "2020-01-15T10:30:00Z"})
+
+	bookmarks, _ := ListBookmarks()
+	if bookmarks[0].ChromeAddedAt != "2020-01-15T10:30:00Z" {
+		t.Errorf("expected chrome timestamp, got %q", bookmarks[0].ChromeAddedAt)
+	}
+
+	// Re-import without chrome timestamp should preserve the existing one
+	_ = UpsertBookmark(&Bookmark{URL: "https://example.com", Title: "Ex Updated", Source: "chrome"})
+	bookmarks, _ = ListBookmarks()
+	if bookmarks[0].ChromeAddedAt != "2020-01-15T10:30:00Z" {
+		t.Errorf("chrome timestamp was overwritten: %q", bookmarks[0].ChromeAddedAt)
+	}
+}
+
+func TestSearchFTS(t *testing.T) {
+	setupTestDB(t)
+
+	_ = UpsertBookmark(&Bookmark{URL: "https://go.dev", Title: "The Go Programming Language", Source: "chrome"})
+	_ = UpsertBookmark(&Bookmark{URL: "https://rust-lang.org", Title: "Rust Programming Language", Source: "chrome"})
+	_ = UpdateContent("https://go.dev", "Go is an open source programming language for building systems")
+
+	results, err := SearchFTS("Go programming", 10)
+	if err != nil {
+		t.Fatalf("SearchFTS: %v", err)
+	}
+	if len(results) == 0 {
+		t.Fatal("expected at least 1 result")
+	}
+	if results[0].URL != "https://go.dev" {
+		t.Errorf("expected go.dev as top result, got %s", results[0].URL)
+	}
+
+	// Search in content
+	results, err = SearchFTS("open source systems", 10)
+	if err != nil {
+		t.Fatalf("SearchFTS content: %v", err)
+	}
+	if len(results) == 0 {
+		t.Fatal("expected result from content search")
+	}
+}
+
+func TestSearchFTS_NoResults(t *testing.T) {
+	setupTestDB(t)
+
+	_ = UpsertBookmark(&Bookmark{URL: "https://example.com", Title: "Example", Source: "chrome"})
+
+	results, err := SearchFTS("nonexistent_xyzzy", 10)
+	if err != nil {
+		t.Fatalf("SearchFTS: %v", err)
+	}
+	if len(results) != 0 {
+		t.Errorf("expected 0 results, got %d", len(results))
+	}
+}
+
+func TestCountBookmarks(t *testing.T) {
+	setupTestDB(t)
+
+	_ = UpsertBookmark(&Bookmark{URL: "https://a.com", Title: "A", Source: "chrome"})
+	_ = UpsertBookmark(&Bookmark{URL: "https://b.com", Title: "B", Source: "chrome"})
+
+	count, err := CountBookmarks()
+	if err != nil {
+		t.Fatalf("CountBookmarks: %v", err)
+	}
+	if count != 2 {
+		t.Errorf("expected 2, got %d", count)
+	}
+
+	fetched, err := CountFetched()
+	if err != nil {
+		t.Fatalf("CountFetched: %v", err)
+	}
+	if fetched != 0 {
+		t.Errorf("expected 0 fetched, got %d", fetched)
+	}
+
+	_ = UpdateContent("https://a.com", "content")
+	fetched, _ = CountFetched()
+	if fetched != 1 {
+		t.Errorf("expected 1 fetched, got %d", fetched)
+	}
+}
+
+func TestEmbeddingCRUD(t *testing.T) {
+	setupTestDB(t)
+
+	now := time.Now()
+	row := &EmbeddingRow{
+		URL:        "https://example.com",
+		ChunkIndex: 0,
+		ChunkText:  "test chunk",
+		Embedding:  []byte{1, 2, 3, 4},
+		Model:      "test-model",
+		CreatedAt:  now,
+	}
+
+	if err := UpsertEmbedding(row); err != nil {
+		t.Fatalf("UpsertEmbedding: %v", err)
+	}
+
+	// List all
+	all, err := ListAllEmbeddings()
+	if err != nil {
+		t.Fatalf("ListAllEmbeddings: %v", err)
+	}
+	if len(all) != 1 {
+		t.Fatalf("expected 1, got %d", len(all))
+	}
+	if all[0].ChunkText != "test chunk" {
+		t.Errorf("unexpected chunk text: %q", all[0].ChunkText)
+	}
+
+	// Upsert same key — should update
+	row.ChunkText = "updated chunk"
+	_ = UpsertEmbedding(row)
+	all, _ = ListAllEmbeddings()
+	if len(all) != 1 {
+		t.Fatalf("expected 1 after upsert, got %d", len(all))
+	}
+	if all[0].ChunkText != "updated chunk" {
+		t.Errorf("upsert didn't update: %q", all[0].ChunkText)
+	}
+
+	// List embedded URLs
+	urls, err := ListEmbeddedURLs()
+	if err != nil {
+		t.Fatalf("ListEmbeddedURLs: %v", err)
+	}
+	if _, ok := urls["https://example.com"]; !ok {
+		t.Error("expected example.com in embedded URLs")
+	}
+
+	// List models
+	models, err := ListEmbeddingModels()
+	if err != nil {
+		t.Fatalf("ListEmbeddingModels: %v", err)
+	}
+	if len(models) != 1 || models[0] != "test-model" {
+		t.Errorf("unexpected models: %v", models)
+	}
+
+	// Delete
+	if err := DeleteEmbeddingsForURL("https://example.com"); err != nil {
+		t.Fatalf("DeleteEmbeddingsForURL: %v", err)
+	}
+	all, _ = ListAllEmbeddings()
+	if len(all) != 0 {
+		t.Errorf("expected 0 after delete, got %d", len(all))
+	}
+}
