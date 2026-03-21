@@ -24,8 +24,8 @@ bm search -s "good sci-fi recommendations"
 Semantic search finds bookmarks by **meaning** rather than exact keywords. It requires:
 
 1. Fetched content (`bm fetch`)
-2. Generated embeddings (`bm index`)
-3. [Ollama](https://ollama.ai) running locally
+2. Generated embeddings (`bm index`) — see [Indexing](indexing.md)
+3. [Ollama](https://ollama.com) running locally
 
 ### How It Works
 
@@ -35,30 +35,4 @@ Semantic search finds bookmarks by **meaning** rather than exact keywords. It re
 
 This means `"learn to code"` will match pages about programming tutorials even if they never use the exact phrase.
 
-### Building the Index
-
-```bash
-bm index                          # index recent bookmarks (default: max 1 year old)
-bm index --max-age 0              # index everything
-bm index --reindex                # force re-index all
-bm index --model custom-model     # use a different embedding model
-```
-
-Default model: `qwen3-embedding:0.6b`.
-
-Each bookmark is split into chunks:
-
-- **Chunk 0**: metadata (title + URL + folder path)
-- **Chunk 1+**: page content in ~24,000 character slices
-
-### Choosing a Model
-
-Any Ollama embedding model works. Considerations:
-
-| Model | Size | Speed | Quality |
-|-------|------|-------|---------|
-| `qwen3-embedding:0.6b` | Small | Fast | Good for most use cases |
-| `nomic-embed-text` | Medium | Medium | Good general purpose |
-| `mxbai-embed-large` | Large | Slower | Higher quality |
-
-Override with `--model` or the `BM_EMBED_MODEL` environment variable.
+See [Indexing](indexing.md) for details on building the embedding index, choosing models, and age filtering.

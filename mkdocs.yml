@@ -38,6 +38,7 @@ nav:
   - Home: index.md
   - Importing: importing.md
   - Content Fetching: fetching.md
+  - Indexing: indexing.md
   - Search: search.md
   - Interactive Browser: interactive.md
   - Statistics: stats.md
