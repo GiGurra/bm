@@ -5,34 +5,46 @@ The `bm stats` command shows an overview of your bookmark database.
 ## Usage
 
 ```bash
-bm stats
+bm stats                          # all profiles
+bm stats -p user@example.com      # filter by profile
 ```
 
 ## Output
 
-### Bookmarks by Year
+### Profiles
 
-Shows how many bookmarks were created each year, along with how many have been fetched, had errors, or been indexed.
+Shows per-profile counts: how many bookmarks are in Chrome (after dedup), how many have been imported, fetched, and indexed.
 
 ```
-Bookmarks: 2886 total, 450 fetched
+Profiles:
+┌──────────────────────────────┬───────────┬──────────┬─────────┬─────────┐
+│ PROFILE                      │ IN CHROME │ IMPORTED │ FETCHED │ INDEXED │
+├──────────────────────────────┼───────────┼──────────┼─────────┼─────────┤
+│ user@example.com (Default)   │       138 │      138 │       0 │     138 │
+│ other@gmail.com (Profile 1)  │      2888 │        0 │       0 │       0 │
+├──────────────────────────────┼───────────┼──────────┼─────────┼─────────┤
+│ TOTAL                        │      3026 │      138 │       0 │     138 │
+└──────────────────────────────┴───────────┴──────────┴─────────┴─────────┘
+```
 
-┌──────┬───────┬─────────┬────────┬─────────┐
-│ YEAR │ TOTAL │ FETCHED │ ERRORS │ INDEXED │
-├──────┼───────┼─────────┼────────┼─────────┤
-│ 2012 │   587 │      42 │     89 │       0 │
-│ 2013 │   277 │      31 │     55 │       0 │
-│ ...  │   ... │     ... │    ... │     ... │
-│ 2025 │   169 │     120 │     12 │     115 │
-├──────┼───────┼─────────┼────────┼─────────┤
-│ TOTAL│  2886 │     450 │    312 │     129 │
-└──────┴───────┴─────────┴────────┴─────────┘
+### Bookmarks by Year
+
+Shows counts per year, including how many are in Chrome vs imported/fetched/indexed.
+
+```
+By year:
+┌───────┬───────────┬──────────┬─────────┬────────┬─────────┐
+│ YEAR  │ IN CHROME │ IMPORTED │ FETCHED │ ERRORS │ INDEXED │
+├───────┼───────────┼──────────┼─────────┼────────┼─────────┤
+│ 2023  │       256 │        0 │       0 │      0 │       0 │
+│ 2024  │       261 │       66 │       0 │      0 │      66 │
+│ 2025  │       221 │       52 │       0 │      0 │      52 │
+│ 2026  │        38 │       20 │       0 │      0 │      20 │
+├───────┼───────────┼──────────┼─────────┼────────┼─────────┤
+│ TOTAL │       776 │      138 │       0 │      0 │     138 │
+└───────┴───────────┴──────────┴─────────┴────────┴─────────┘
 ```
 
 ### Fetch Status Breakdown
 
 Shows counts per fetch status category — useful for understanding how much content is available.
-
-### Per-Profile Stats
-
-Shows bookmark counts grouped by Chrome profile, including fetched, errors, and indexed counts.

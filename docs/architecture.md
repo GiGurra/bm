@@ -12,7 +12,6 @@ cmd/
   list/          List/filter bookmarks + interactive TUI
   sync/          Run import + index (--fetch to also fetch)
   stats/         Database statistics
-  profile/       Profile management
   clear/         Clear data
 pkg/
   db/            SQLite storage (bookmarks, FTS5, embeddings)

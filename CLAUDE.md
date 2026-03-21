@@ -25,6 +25,7 @@ go install .
 | `search`  | Text search (FTS5) or semantic search (`-s` flag)        |
 | `list`    | List/filter bookmarks                                    |
 | `sync`    | Run import + index in sequence (--fetch to also fetch)   |
+| `stats`   | Show database statistics (per-profile, per-year, fetch status) |
 
 **Packages (under `pkg/`):**
 

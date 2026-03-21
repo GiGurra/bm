@@ -47,8 +47,9 @@ Found 1 Chrome profile(s):
 Imported from user@example.com (Default): 0 new, 0 updated, 2886 unchanged (total 2886)
 ```
 
-### Managing Profiles
+### Viewing Profile Stats
 
 ```bash
-bm profile list    # show all profiles with bookmark/fetch/index counts
+bm stats                       # all profiles
+bm stats -p user@example.com   # single profile
 ```
