@@ -15,15 +15,15 @@ bm list -w -p "Default"   # filter by profile
 |-----|--------|
 | `/` | Start text search |
 | `s` | Start semantic search |
-| `↑`/`↓` or `j`/`k` | Navigate |
-| `Enter` | Open URL in browser |
+| `↑`/`↓` or `j`/`k` | Navigate (also exits search input) |
+| `Enter` | Submit search (in input) / Open URL (in list) |
 | `1`-`5` | Sort by column |
 | `Esc` | Clear search / exit mode |
 | `q` | Quit |
 
 ## Features
 
-- **Real-time search** — results update as you type
+- **Search as you type** — results update live with debouncing (150ms for text, 250ms for semantic)
 - **Column sorting** — press number keys to sort by different columns
 - **Dual search** — switch between text (`/`) and semantic (`s`) search
 - **URL opening** — press Enter to open the selected bookmark in your default browser

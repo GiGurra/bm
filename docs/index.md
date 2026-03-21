@@ -13,9 +13,29 @@ CLI tool for creating a searchable database of browser bookmarks with both text 
 
 ## Installation
 
+### bm
+
 ```bash
 go install github.com/GiGurra/bm@latest
 ```
+
+### Ollama (required for semantic search)
+
+Semantic search requires [Ollama](https://ollama.com) running locally with an embedding model.
+
+```bash
+# Install Ollama
+brew install ollama          # macOS / Linux (Homebrew)
+# or download from https://ollama.com/download
+
+# Start the Ollama server
+ollama serve
+
+# Pull the default embedding model
+ollama pull qwen3-embedding:0.6b
+```
+
+Text search (`bm search`) and the interactive browser (`bm list -w`) work without Ollama. Only semantic search (`bm search -s`, `bm index`) requires it.
 
 ## Quick Start
 

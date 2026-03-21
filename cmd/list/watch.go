@@ -52,6 +52,12 @@ type semanticMatch struct {
 	similarity float32
 }
 
+type debounceMsg struct {
+	seq   int
+	query string
+	mode  searchMode
+}
+
 type watchModel struct {
 	// Data
 	allBookmarks []db.Bookmark
@@ -83,6 +89,7 @@ type watchModel struct {
 	lastQuery   string
 	searching   bool
 	searchError string
+	searchSeq   int // incremented on each keystroke, used for debounce
 
 	// Help
 	helpView bool
@@ -206,6 +213,30 @@ func (m *watchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.viewportOffset = 0
 		return m, nil
 
+	case debounceMsg:
+		if msg.seq != m.searchSeq {
+			return m, nil // stale, user typed more since this debounce was scheduled
+		}
+		query := strings.TrimSpace(msg.query)
+		if query == "" {
+			m.searchMode = modeNone
+			m.lastQuery = ""
+			m.searchError = ""
+			m.displayed = m.allBookmarks
+			m.scores = nil
+			m.cursor = 0
+			m.viewportOffset = 0
+			m.resortDisplayed()
+			return m, nil
+		}
+		m.searchMode = msg.mode
+		m.lastQuery = query
+		m.searching = true
+		if msg.mode == modeText {
+			return m, m.runFTSSearch(query)
+		}
+		return m, m.runSemanticSearch(query)
+
 	case tea.KeyPressMsg:
 		return m.handleKey(msg)
 	}
@@ -243,10 +274,20 @@ func (m *watchModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 				m.searching = true
 				return m, m.runSemanticSearch(query)
 			}
+		case "up", "down":
+			m.semanticFocused = false
+			m.semanticInput.Blur()
+			return m, nil
 		default:
 			var cmd tea.Cmd
 			m.semanticInput, cmd = m.semanticInput.Update(msg)
-			return m, cmd
+			m.searchSeq++
+			seq := m.searchSeq
+			query := m.semanticInput.Value()
+			debounceCmd := tea.Tick(250*time.Millisecond, func(t time.Time) tea.Msg {
+				return debounceMsg{seq: seq, query: query, mode: modeSemantic}
+			})
+			return m, tea.Batch(cmd, debounceCmd)
 		}
 		return m, nil
 	}
@@ -259,10 +300,12 @@ func (m *watchModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 				m.searchInput.SetValue("")
 				m.searchMode = modeNone
 				m.lastQuery = ""
+				m.searchError = ""
 				m.displayed = m.allBookmarks
 				m.scores = nil
 				m.cursor = 0
 				m.viewportOffset = 0
+				m.searchSeq++ // cancel pending debounce
 			} else {
 				m.searchFocused = false
 				m.searchInput.Blur()
@@ -275,15 +318,23 @@ func (m *watchModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 				m.searchMode = modeText
 				m.lastQuery = query
 				m.searching = true
+				m.searchSeq++ // cancel pending debounce
 				return m, m.runFTSSearch(query)
 			}
-		case "up":
+		case "up", "down":
 			m.searchFocused = false
 			m.searchInput.Blur()
+			return m, nil
 		default:
 			var cmd tea.Cmd
 			m.searchInput, cmd = m.searchInput.Update(msg)
-			return m, cmd
+			m.searchSeq++
+			seq := m.searchSeq
+			query := m.searchInput.Value()
+			debounceCmd := tea.Tick(150*time.Millisecond, func(t time.Time) tea.Msg {
+				return debounceMsg{seq: seq, query: query, mode: modeText}
+			})
+			return m, tea.Batch(cmd, debounceCmd)
 		}
 		return m, nil
 	}
@@ -369,33 +420,46 @@ func (m *watchModel) View() tea.View {
 
 	// Search bar
 	b.WriteString("\n  ")
+	var leftContent string
+	if m.semanticFocused {
+		leftContent = wSemanticStyle.Render("Semantic: ") + m.semanticInput.View()
+	} else if m.searchFocused {
+		leftContent = wSearchStyle.Render("Search: ") + m.searchInput.View()
+	} else if m.searchError != "" {
+		leftContent = wErrorStyle.Render(m.searchError)
+	} else if m.searchMode == modeSemantic {
+		leftContent = wSemanticStyle.Render("Semantic: [" + m.lastQuery + "]")
+	} else if m.searchMode == modeText {
+		leftContent = wSearchStyle.Render("Search: [" + m.lastQuery + "]")
+	} else {
+		leftContent = wHelpStyle.Render("/ search  s semantic")
+	}
+	b.WriteString(leftContent)
+
+	// Count
+	var countStr string
+	if len(m.displayed) != len(m.allBookmarks) {
+		countStr = fmt.Sprintf("  [%d of %d]", len(m.displayed), len(m.allBookmarks))
+	} else if len(m.allBookmarks) > 0 {
+		countStr = fmt.Sprintf("  [%d bookmarks]", len(m.allBookmarks))
+	}
+	b.WriteString(wHelpStyle.Render(countStr))
+
+	// Right-aligned "searching..." indicator
 	if m.searching {
+		indicator := "searching..."
+		renderedCount := wHelpStyle.Render(countStr)
+		usedWidth := 2 + lipgloss.Width(leftContent) + lipgloss.Width(renderedCount)
+		gap := m.width - usedWidth - len(indicator) - 1
+		if gap < 2 {
+			gap = 2
+		}
+		b.WriteString(strings.Repeat(" ", gap))
 		style := wSearchStyle
 		if m.searchMode == modeSemantic {
 			style = wSemanticStyle
 		}
-		b.WriteString(style.Render("Searching: [" + m.lastQuery + "]..."))
-	} else if m.semanticFocused {
-		b.WriteString(wSemanticStyle.Render("Semantic: "))
-		b.WriteString(m.semanticInput.View())
-	} else if m.searchFocused {
-		b.WriteString(wSearchStyle.Render("Search: "))
-		b.WriteString(m.searchInput.View())
-	} else if m.searchError != "" {
-		b.WriteString(wErrorStyle.Render(m.searchError))
-	} else if m.searchMode == modeSemantic {
-		b.WriteString(wSemanticStyle.Render("Semantic: [" + m.lastQuery + "]"))
-	} else if m.searchMode == modeText {
-		b.WriteString(wSearchStyle.Render("Search: [" + m.lastQuery + "]"))
-	} else {
-		b.WriteString(wHelpStyle.Render("/ search  s semantic"))
-	}
-
-	// Count
-	if len(m.displayed) != len(m.allBookmarks) {
-		b.WriteString(wHelpStyle.Render(fmt.Sprintf("  [%d of %d]", len(m.displayed), len(m.allBookmarks))))
-	} else if len(m.allBookmarks) > 0 {
-		b.WriteString(wHelpStyle.Render(fmt.Sprintf("  [%d bookmarks]", len(m.allBookmarks))))
+		b.WriteString(style.Render(indicator))
 	}
 	b.WriteString("\n\n")
 
