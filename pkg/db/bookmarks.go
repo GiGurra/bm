@@ -51,31 +51,38 @@ func UpsertBookmark(b *Bookmark) error {
 }
 
 // BulkUpsertBookmarks loads all existing bookmarks into memory, compares with the
-// incoming list, and only writes the ones that are new or changed. All writes happen
-// in a single transaction to avoid per-row fsync overhead.
-func BulkUpsertBookmarks(bookmarks []*Bookmark) (inserted, updated, total int, err error) {
+// incoming list, and only writes the ones that are new or changed. Bookmarks that
+// exist in the DB for the same source(s) but are absent from the incoming list are
+// deleted (along with their embeddings). All writes happen in a single transaction.
+func BulkUpsertBookmarks(bookmarks []*Bookmark) (inserted, updated, deleted, total int, err error) {
 	db, err := Open()
 	if err != nil {
-		return 0, 0, 0, err
+		return 0, 0, 0, 0, err
+	}
+
+	// Collect which sources are represented in the incoming bookmarks
+	incomingSources := make(map[string]bool)
+	for _, b := range bookmarks {
+		incomingSources[b.Source] = true
 	}
 
 	// Load existing bookmarks into a map keyed by (url, folder_path, source)
 	existing := make(map[bookmarkKey]Bookmark)
 	rows, err := db.Query(`SELECT url, title, folder_path, source, source_name, chrome_added_at FROM bookmarks`)
 	if err != nil {
-		return 0, 0, 0, fmt.Errorf("load existing bookmarks: %w", err)
+		return 0, 0, 0, 0, fmt.Errorf("load existing bookmarks: %w", err)
 	}
 	for rows.Next() {
 		var b Bookmark
 		if err := rows.Scan(&b.URL, &b.Title, &b.FolderPath, &b.Source, &b.SourceName, &b.ChromeAddedAt); err != nil {
 			rows.Close()
-			return 0, 0, 0, fmt.Errorf("scan existing bookmark: %w", err)
+			return 0, 0, 0, 0, fmt.Errorf("scan existing bookmark: %w", err)
 		}
 		existing[bookmarkKey{b.URL, b.FolderPath, b.Source}] = b
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
-		return 0, 0, 0, fmt.Errorf("iterate existing bookmarks: %w", err)
+		return 0, 0, 0, 0, fmt.Errorf("iterate existing bookmarks: %w", err)
 	}
 
 	// Deduplicate by composite key, keeping the entry with the latest chrome_added_at
@@ -112,39 +119,84 @@ func BulkUpsertBookmarks(bookmarks []*Bookmark) (inserted, updated, total int, e
 		toWrite = append(toWrite, b)
 	}
 
-	if len(toWrite) == 0 {
-		return 0, 0, total, nil
+	// Find stale entries: in DB for an incoming source but absent from the incoming set
+	var toDelete []bookmarkKey
+	for key, eb := range existing {
+		if !incomingSources[eb.Source] {
+			continue // different source, don't touch
+		}
+		if _, stillExists := deduped[key]; !stillExists {
+			toDelete = append(toDelete, key)
+		}
+	}
+	deleted = len(toDelete)
+
+	if len(toWrite) == 0 && len(toDelete) == 0 {
+		return 0, 0, 0, total, nil
 	}
 
 	tx, err := db.Begin()
 	if err != nil {
-		return 0, 0, 0, fmt.Errorf("begin transaction: %w", err)
+		return 0, 0, 0, 0, fmt.Errorf("begin transaction: %w", err)
 	}
 	defer tx.Rollback()
 
-	stmt, err := tx.Prepare(`INSERT INTO bookmarks (url, title, folder_path, source, source_name, content_text, fetched_at, fetch_status, added_at, updated_at, chrome_added_at)
-		VALUES (?, ?, ?, ?, ?, '', '', '', ?, ?, ?)
-		ON CONFLICT(url, folder_path, source) DO UPDATE SET
-			title=excluded.title,
-			source_name=CASE WHEN excluded.source_name != '' THEN excluded.source_name ELSE bookmarks.source_name END,
-			updated_at=excluded.updated_at,
-			chrome_added_at=CASE WHEN excluded.chrome_added_at != '' THEN excluded.chrome_added_at ELSE bookmarks.chrome_added_at END`)
-	if err != nil {
-		return 0, 0, 0, fmt.Errorf("prepare statement: %w", err)
-	}
-	defer stmt.Close()
+	// Upserts
+	if len(toWrite) > 0 {
+		stmt, err := tx.Prepare(`INSERT INTO bookmarks (url, title, folder_path, source, source_name, content_text, fetched_at, fetch_status, added_at, updated_at, chrome_added_at)
+			VALUES (?, ?, ?, ?, ?, '', '', '', ?, ?, ?)
+			ON CONFLICT(url, folder_path, source) DO UPDATE SET
+				title=excluded.title,
+				source_name=CASE WHEN excluded.source_name != '' THEN excluded.source_name ELSE bookmarks.source_name END,
+				updated_at=excluded.updated_at,
+				chrome_added_at=CASE WHEN excluded.chrome_added_at != '' THEN excluded.chrome_added_at ELSE bookmarks.chrome_added_at END`)
+		if err != nil {
+			return 0, 0, 0, 0, fmt.Errorf("prepare upsert: %w", err)
+		}
+		defer stmt.Close()
 
-	for _, b := range toWrite {
-		if _, err := stmt.Exec(b.URL, b.Title, b.FolderPath, b.Source, b.SourceName, b.AddedAt, b.UpdatedAt, b.ChromeAddedAt); err != nil {
-			return 0, 0, 0, fmt.Errorf("upsert %s: %w", b.URL, err)
+		for _, b := range toWrite {
+			if _, err := stmt.Exec(b.URL, b.Title, b.FolderPath, b.Source, b.SourceName, b.AddedAt, b.UpdatedAt, b.ChromeAddedAt); err != nil {
+				return 0, 0, 0, 0, fmt.Errorf("upsert %s: %w", b.URL, err)
+			}
+		}
+	}
+
+	// Deletes
+	if len(toDelete) > 0 {
+		delBookmark, err := tx.Prepare(`DELETE FROM bookmarks WHERE url = ? AND folder_path = ? AND source = ?`)
+		if err != nil {
+			return 0, 0, 0, 0, fmt.Errorf("prepare delete bookmark: %w", err)
+		}
+		defer delBookmark.Close()
+
+		delEmbed, err := tx.Prepare(`DELETE FROM bookmark_embeddings WHERE url = ?`)
+		if err != nil {
+			return 0, 0, 0, 0, fmt.Errorf("prepare delete embeddings: %w", err)
+		}
+		defer delEmbed.Close()
+
+		for _, key := range toDelete {
+			if _, err := delBookmark.Exec(key.URL, key.FolderPath, key.Source); err != nil {
+				return 0, 0, 0, 0, fmt.Errorf("delete bookmark %s: %w", key.URL, err)
+			}
+			// Clean up embeddings for this URL (only if no other bookmark entries share it)
+			var remaining int
+			_ = tx.QueryRow(`SELECT COUNT(*) FROM bookmarks WHERE url = ? AND NOT (folder_path = ? AND source = ?)`,
+				key.URL, key.FolderPath, key.Source).Scan(&remaining)
+			if remaining == 0 {
+				if _, err := delEmbed.Exec(key.URL); err != nil {
+					return 0, 0, 0, 0, fmt.Errorf("delete embeddings for %s: %w", key.URL, err)
+				}
+			}
 		}
 	}
 
 	if err := tx.Commit(); err != nil {
-		return 0, 0, 0, fmt.Errorf("commit: %w", err)
+		return 0, 0, 0, 0, fmt.Errorf("commit: %w", err)
 	}
 
-	return inserted, updated, total, nil
+	return inserted, updated, deleted, total, nil
 }
 
 // UpdateContent sets the fetched content for a bookmark.
@@ -369,7 +421,7 @@ func ListYearStats(sourceFilter string) ([]YearStats, error) {
 
 	query := `
 		SELECT
-			COALESCE(NULLIF(strftime('%Y', chrome_added_at), ''), '?') as year,
+			COALESCE(NULLIF(substr(chrome_added_at, 1, 4), ''), '?') as year,
 			COUNT(*) as total,
 			SUM(CASE WHEN fetch_status = 'ok' THEN 1 ELSE 0 END) as fetched,
 			SUM(CASE WHEN fetch_status LIKE 'error:%' THEN 1 ELSE 0 END) as errors,

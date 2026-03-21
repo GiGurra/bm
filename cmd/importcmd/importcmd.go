@@ -114,15 +114,15 @@ func importProfile(p chrome.Profile) int {
 		}
 	}
 
-	inserted, updated, total, err := db.BulkUpsertBookmarks(dbBookmarks)
+	inserted, updated, deleted, total, err := db.BulkUpsertBookmarks(dbBookmarks)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error importing from %s: %v\n", sourceName, err)
 		return 0
 	}
 
 	unchanged := total - inserted - updated
-	fmt.Printf("Imported from %s: %d new, %d updated, %d unchanged (total %d)\n",
-		sourceName, inserted, updated, unchanged, total)
+	fmt.Printf("Imported from %s: %d new, %d updated, %d deleted, %d unchanged (total %d)\n",
+		sourceName, inserted, updated, deleted, unchanged, total)
 	return inserted + updated
 }
 
@@ -161,14 +161,14 @@ func importFile(path string) int {
 		}
 	}
 
-	inserted, updated, total, err := db.BulkUpsertBookmarks(dbBookmarks)
+	inserted, updated, deleted, total, err := db.BulkUpsertBookmarks(dbBookmarks)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error importing from %s: %v\n", path, err)
 		return 0
 	}
 
 	unchanged := total - inserted - updated
-	fmt.Printf("Imported from %s: %d new, %d updated, %d unchanged (total %d)\n",
-		path, inserted, updated, unchanged, total)
+	fmt.Printf("Imported from %s: %d new, %d updated, %d deleted, %d unchanged (total %d)\n",
+		path, inserted, updated, deleted, unchanged, total)
 	return inserted + updated
 }
