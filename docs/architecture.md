@@ -1,6 +1,6 @@
 # Architecture
 
-## Overview
+## Project Structure
 
 ```
 main.go          CLI entry point (cobra command tree)
@@ -22,66 +22,35 @@ pkg/
   table/         TUI table widget
 ```
 
-## Database Schema
+## Database
 
-Primary key: `(url, folder_path, source)` — the same URL in different folders or from different Chrome profiles is stored as separate entries.
+All data lives in `~/.bm/bm.sqlite` (WAL mode, pure-Go SQLite via `modernc.org/sqlite`).
 
-### bookmarks
+### Schema
 
-| Column | Type | Description |
-|--------|------|-------------|
-| url | TEXT | Bookmark URL |
-| folder_path | TEXT | Chrome folder hierarchy |
-| source | TEXT | Stable source ID (e.g. `chrome:gaia:12345`) |
-| title | TEXT | Page title |
-| source_name | TEXT | Human-readable source name |
-| content_text | TEXT | Fetched page text |
-| fetched_at | TEXT | When content was fetched |
-| fetch_status | TEXT | `""`, `"ok"`, `"error:404"`, etc. |
-| added_at | TEXT | When added to bm database |
-| updated_at | TEXT | Last update time |
-| chrome_added_at | TEXT | Original Chrome bookmark timestamp |
+**bookmarks** — primary key: `(url, folder_path, source)`
 
-### bookmarks_fts
+| Column | Description |
+|--------|-------------|
+| `url` | Bookmark URL |
+| `folder_path` | Chrome folder hierarchy |
+| `source` | Stable source ID (e.g. `chrome:gaia:12345`) |
+| `title` | Page title |
+| `content_text` | Fetched page text |
+| `fetch_status` | `""`, `"ok"`, `"error:404"`, etc. |
+| `chrome_added_at` | Original Chrome bookmark timestamp |
 
-FTS5 virtual table synced via triggers. Indexes `url`, `title`, and `content_text`.
+**bookmarks_fts** — FTS5 virtual table synced via triggers, indexes `url`, `title`, `content_text`.
 
-### bookmark_embeddings
+**bookmark_embeddings** — primary key: `(url, chunk_index)`
 
-| Column | Type | Description |
-|--------|------|-------------|
-| url | TEXT | Bookmark URL |
-| chunk_index | INTEGER | Chunk number (0 = metadata, 1+ = content) |
-| chunk_text | TEXT | Text that was embedded |
-| embedding | BLOB | Float32 vector |
-| model | TEXT | Ollama model used |
-| created_at | TEXT | When embedding was created |
+| Column | Description |
+|--------|-------------|
+| `embedding` | Float32 vector blob |
+| `chunk_text` | Text that was embedded |
+| `model` | Ollama model used |
 
-### schema_version
-
-Tracks migration state. Migrations are applied sequentially on startup.
-
-## Import Pipeline
-
-1. **Parse** — Read Chrome's `Bookmarks` JSON file (one per profile)
-2. **Deduplicate** — Collapse entries with same `(url, folder_path, source)`, keeping latest `chrome_added_at`
-3. **Diff** — Load existing bookmarks into memory, compare against incoming
-4. **Write** — Only insert/update changed entries, in a single transaction
-
-This makes re-imports near-instant even with thousands of bookmarks.
-
-## Search
-
-### Text Search (FTS5)
-
-Uses SQLite's FTS5 extension with `MATCH` queries, falling back to `LIKE` for queries with special characters.
-
-### Semantic Search
-
-1. Query text is embedded via Ollama
-2. All stored embeddings are loaded
-3. Cosine similarity is computed against each
-4. Top-N results are returned
+**schema_version** — tracks migration state. Migrations are applied sequentially on startup.
 
 ## Dependencies
 
@@ -90,6 +59,6 @@ Uses SQLite's FTS5 extension with `MATCH` queries, falling back to `LIKE` for qu
 | `github.com/GiGurra/boa` | Typed params wrapper for cobra |
 | `github.com/spf13/cobra` | CLI framework |
 | `modernc.org/sqlite` | Pure-Go SQLite (no CGO) |
-| `golang.org/x/net/html` | HTML parsing for content extraction |
+| `golang.org/x/net/html` | HTML parsing |
 | `github.com/jedib0t/go-pretty/v6` | Table formatting |
-| `github.com/charmbracelet/bubbletea` | TUI framework (interactive mode) |
+| `github.com/charmbracelet/bubbletea` | TUI framework |

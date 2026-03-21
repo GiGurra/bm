@@ -17,18 +17,14 @@ CLI tool for creating a searchable database of browser bookmarks with both text 
 go install github.com/GiGurra/bm@latest
 ```
 
-Requires [Ollama](https://ollama.ai) for semantic search (optional).
-
 ## Quick Start
 
 ```bash
 # Import bookmarks from Chrome
 bm import
 
-# Fetch page content
+# Fetch page content and build search index
 bm fetch
-
-# Build semantic search index
 bm index
 
 # Or do all three at once
@@ -44,6 +40,26 @@ bm list -w
 # Stats
 bm stats
 ```
+
+## How It Works
+
+```
+Chrome Bookmarks JSON
+        │
+        ▼
+   bm import ──► SQLite DB (~/.bm/bm.sqlite)
+                      │
+                 bm fetch ──► page content stored in DB
+                      │
+                 bm index ──► Ollama embeddings stored in DB
+                      │
+              bm search / bm list -w
+```
+
+1. **Import** reads Chrome's bookmark files and stores them in SQLite with a composite key `(url, folder_path, source)` — duplicate URLs in different folders are preserved
+2. **Fetch** downloads page content and extracts text from HTML
+3. **Index** generates vector embeddings via Ollama for semantic search
+4. **Search** queries either FTS5 (text) or cosine similarity (semantic)
 
 ## Data Storage
 

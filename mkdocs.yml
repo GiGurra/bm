@@ -36,5 +36,9 @@ markdown_extensions:
 
 nav:
   - Home: index.md
-  - Commands: commands.md
+  - Importing: importing.md
+  - Content Fetching: fetching.md
+  - Search: search.md
+  - Interactive Browser: interactive.md
+  - Statistics: stats.md
   - Architecture: architecture.md
