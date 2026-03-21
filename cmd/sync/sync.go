@@ -16,6 +16,7 @@ type Params struct {
 	Model   string `long:"model" env:"BM_EMBED_MODEL" help:"Embedding model" default:"qwen3-embedding:0.6b"`
 	URL     string `long:"url" env:"BM_OLLAMA_URL" help:"Ollama API base URL" default:"http://localhost:11434"`
 	Profile string `short:"p" optional:"true" help:"Filter by profile (name, email, or source ID)"`
+	MaxAge  string `long:"max-age" help:"Skip bookmarks older than this (e.g. 1y, 6m, 90d)" default:"1y"`
 	Fetch   bool   `long:"fetch" help:"Also fetch page content (beta)"`
 }
 
@@ -35,7 +36,7 @@ func Cmd() *cobra.Command {
 
 			if params.Fetch {
 				fmt.Println("\n=== Step 2: Fetch ===")
-				fetch.Run(params.Profile, "1y", false, 0, 500)
+				fetch.Run(params.Profile, params.MaxAge, false, 0, 500)
 			}
 
 			step := 2
@@ -43,7 +44,7 @@ func Cmd() *cobra.Command {
 				step = 3
 			}
 			fmt.Printf("\n=== Step %d: Index ===\n", step)
-			index.Run(params.URL, params.Model, params.Profile, "1y", false)
+			index.Run(params.URL, params.Model, params.Profile, params.MaxAge, false)
 
 			fmt.Println("\nSync complete!")
 		},
