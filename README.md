@@ -12,4 +12,4 @@ bm import && bm fetch && bm index
 bm search "golang tutorials"
 ```
 
-**[Documentation](https://gigurra.github.io/bm/)** | **[Commands](https://gigurra.github.io/bm/commands/)**
+**[Documentation](https://gigurra.github.io/bm/)**
