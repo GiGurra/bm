@@ -40,18 +40,15 @@ Text search (`bm search`) and the interactive browser (`bm list -w`) work withou
 ## Quick Start
 
 ```bash
-# Import bookmarks from Chrome
-bm import
-
-# Build semantic search index (works without fetching)
-bm index
+# Import bookmarks and build search index
+bm sync                                  # or: bm import && bm index
 
 # Search
 bm search "golang tutorials"
 bm search -s "how to learn programming"  # semantic search
 
-# Optional: fetch page content for deeper search results (beta)
-bm fetch
+# Optional: also fetch page content for deeper search (beta)
+bm sync --fetch
 
 # Interactive browser
 bm list -w

@@ -10,7 +10,7 @@ cmd/
   index/         Generate Ollama embeddings
   search/        Text (FTS5) and semantic search
   list/          List/filter bookmarks + interactive TUI
-  sync/          Run import + fetch + index
+  sync/          Run import + index (--fetch to also fetch)
   stats/         Database statistics
   profile/       Profile management
   clear/         Clear data

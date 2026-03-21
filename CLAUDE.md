@@ -24,7 +24,7 @@ go install .
 | `index`   | Generate embeddings via Ollama for semantic search       |
 | `search`  | Text search (FTS5) or semantic search (`-s` flag)        |
 | `list`    | List/filter bookmarks                                    |
-| `sync`    | Run import + fetch + index in sequence                   |
+| `sync`    | Run import + index in sequence (--fetch to also fetch)   |
 
 **Packages (under `pkg/`):**
 
