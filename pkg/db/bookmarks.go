@@ -11,7 +11,7 @@ type Bookmark struct {
 	Title         string
 	FolderPath    string
 	Source        string // stable source ID (e.g. "chrome:gaia:12345")
-	SourceName    string // human-readable source name (e.g. "gigurra@gmail.com (Default)")
+	SourceName    string // human-readable source name (e.g. "user@gmail.com (Default)")
 	ContentText   string
 	FetchedAt     string
 	FetchStatus   string // "", "ok", "error:404", "error:403", "error:timeout", etc.
