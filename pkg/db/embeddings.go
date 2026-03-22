@@ -6,12 +6,13 @@ import (
 )
 
 type EmbeddingRow struct {
-	URL        string
-	ChunkIndex int
-	ChunkText  string
-	Embedding  []byte // raw float32 bytes
-	Model      string
-	CreatedAt  time.Time
+	URL         string
+	ChunkIndex  int
+	ChunkText   string
+	Embedding   []byte // raw float32 bytes
+	Model       string
+	CreatedAt   time.Time
+	ContentHash string
 }
 
 func UpsertEmbedding(row *EmbeddingRow) error {
@@ -20,13 +21,13 @@ func UpsertEmbedding(row *EmbeddingRow) error {
 		return err
 	}
 
-	_, err = db.Exec(`INSERT INTO bookmark_embeddings (url, chunk_index, chunk_text, embedding, model, created_at)
-		VALUES (?, ?, ?, ?, ?, ?)
+	_, err = db.Exec(`INSERT INTO bookmark_embeddings (url, chunk_index, chunk_text, embedding, model, created_at, content_hash)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(url, chunk_index) DO UPDATE SET
 			chunk_text=excluded.chunk_text, embedding=excluded.embedding,
-			model=excluded.model, created_at=excluded.created_at`,
+			model=excluded.model, created_at=excluded.created_at, content_hash=excluded.content_hash`,
 		row.URL, row.ChunkIndex, row.ChunkText, row.Embedding, row.Model,
-		row.CreatedAt.Format(time.RFC3339Nano))
+		row.CreatedAt.Format(time.RFC3339Nano), row.ContentHash)
 	return err
 }
 
@@ -55,26 +56,31 @@ func DeleteEmbeddingsForURL(url string) error {
 	return err
 }
 
-func ListEmbeddedURLs() (map[string]time.Time, error) {
+type EmbeddedURLInfo struct {
+	CreatedAt   time.Time
+	ContentHash string
+}
+
+func ListEmbeddedURLs() (map[string]EmbeddedURLInfo, error) {
 	db, err := Open()
 	if err != nil {
 		return nil, err
 	}
 
-	rows, err := db.Query(`SELECT url, MAX(created_at) FROM bookmark_embeddings GROUP BY url`)
+	rows, err := db.Query(`SELECT url, MAX(created_at), COALESCE(MAX(content_hash), '') FROM bookmark_embeddings GROUP BY url`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
-	result := make(map[string]time.Time)
+	result := make(map[string]EmbeddedURLInfo)
 	for rows.Next() {
-		var url, createdAt string
-		if err := rows.Scan(&url, &createdAt); err != nil {
+		var url, createdAt, hash string
+		if err := rows.Scan(&url, &createdAt, &hash); err != nil {
 			return nil, err
 		}
 		t, _ := time.Parse(time.RFC3339Nano, createdAt)
-		result[url] = t
+		result[url] = EmbeddedURLInfo{CreatedAt: t, ContentHash: hash}
 	}
 	return result, rows.Err()
 }

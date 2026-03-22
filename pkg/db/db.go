@@ -59,7 +59,7 @@ func OpenMem() (*sql.DB, error) {
 	return db, nil
 }
 
-const currentSchemaVersion = 2
+const currentSchemaVersion = 3
 
 func migrate(db *sql.DB) error {
 	// Ensure schema_version table exists
@@ -102,6 +102,8 @@ func applyMigration(db *sql.DB, version int) error {
 		return migrateV1(db)
 	case 2:
 		return migrateV2(db)
+	case 3:
+		return migrateV3(db)
 	default:
 		return fmt.Errorf("unknown migration version %d", version)
 	}
@@ -215,4 +217,10 @@ func migrateV2(db *sql.DB) error {
 		}
 	}
 	return nil
+}
+
+// migrateV3 adds content_hash column to bookmark_embeddings for change detection.
+func migrateV3(db *sql.DB) error {
+	_, err := db.Exec(`ALTER TABLE bookmark_embeddings ADD COLUMN content_hash TEXT NOT NULL DEFAULT ''`)
+	return err
 }

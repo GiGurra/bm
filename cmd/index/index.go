@@ -1,6 +1,7 @@
 package index
 
 import (
+	"crypto/sha256"
 	"fmt"
 	"os"
 	"strings"
@@ -98,13 +99,19 @@ func Run(url, model, profile, maxAge string, reindex bool) {
 	}
 
 	if reindex {
-		embeddedURLs = make(map[string]time.Time)
+		embeddedURLs = make(map[string]db.EmbeddedURLInfo)
 	}
 
 	var toIndex []db.Bookmark
+	changed := 0
 	for _, b := range bookmarks {
-		if _, exists := embeddedURLs[b.URL]; !exists {
+		info, exists := embeddedURLs[b.URL]
+		if !exists {
 			toIndex = append(toIndex, b)
+		} else if info.ContentHash == "" || info.ContentHash != contentHash(b) {
+			// Empty hash (legacy/pre-v3) or content changed — re-index
+			toIndex = append(toIndex, b)
+			changed++
 		}
 	}
 
@@ -113,8 +120,13 @@ func Run(url, model, profile, maxAge string, reindex bool) {
 		return
 	}
 
-	fmt.Printf("Indexing %d bookmarks (%d already indexed)...\n",
-		len(toIndex), len(bookmarks)-len(toIndex))
+	if changed > 0 {
+		fmt.Printf("Indexing %d bookmarks (%d new, %d changed, %d up-to-date)...\n",
+			len(toIndex), len(toIndex)-changed, changed, len(bookmarks)-len(toIndex))
+	} else {
+		fmt.Printf("Indexing %d bookmarks (%d already indexed)...\n",
+			len(toIndex), len(bookmarks)-len(toIndex))
+	}
 
 	start := time.Now()
 	totalChunks := 0
@@ -128,7 +140,10 @@ func Run(url, model, profile, maxAge string, reindex bool) {
 		fmt.Printf("  [%d/%d] %s", i+1, len(toIndex), title)
 
 		chunks := chunkBookmark(b)
-		if reindex {
+		hash := contentHash(b)
+
+		// Delete old embeddings when re-indexing (forced, changed, or legacy without hash)
+		if _, exists := embeddedURLs[b.URL]; reindex || exists {
 			_ = db.DeleteEmbeddingsForURL(b.URL)
 		}
 
@@ -139,12 +154,13 @@ func Run(url, model, profile, maxAge string, reindex bool) {
 				continue
 			}
 			row := &db.EmbeddingRow{
-				URL:        b.URL,
-				ChunkIndex: chunk.index,
-				ChunkText:  chunk.text,
-				Embedding:  ollama.Float32ToBytes(embedding),
-				Model:      client.Model,
-				CreatedAt:  time.Now(),
+				URL:         b.URL,
+				ChunkIndex:  chunk.index,
+				ChunkText:   chunk.text,
+				Embedding:   ollama.Float32ToBytes(embedding),
+				Model:       client.Model,
+				CreatedAt:   time.Now(),
+				ContentHash: hash,
 			}
 			if err := db.UpsertEmbedding(row); err != nil {
 				fmt.Printf(" - DB ERROR: %v\n", err)
@@ -238,4 +254,18 @@ func parseDuration(s string) time.Duration {
 	default:
 		return 0
 	}
+}
+
+// contentHash returns a SHA-256 hex digest of the bookmark fields used for embedding.
+// A change in any of these fields means the embeddings are stale.
+func contentHash(b db.Bookmark) string {
+	h := sha256.New()
+	h.Write([]byte(b.Title))
+	h.Write([]byte{0})
+	h.Write([]byte(b.URL))
+	h.Write([]byte{0})
+	h.Write([]byte(b.FolderPath))
+	h.Write([]byte{0})
+	h.Write([]byte(b.ContentText))
+	return fmt.Sprintf("%x", h.Sum(nil))
 }

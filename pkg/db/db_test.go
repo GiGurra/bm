@@ -701,3 +701,79 @@ func TestEmbeddingCRUD(t *testing.T) {
 		t.Errorf("expected 0 after delete, got %d", len(all))
 	}
 }
+
+func TestEmbedding_ContentHashStored(t *testing.T) {
+	setupTestDB(t)
+
+	row := &EmbeddingRow{
+		URL:         "https://example.com",
+		ChunkIndex:  0,
+		ChunkText:   "test chunk",
+		Embedding:   []byte{1, 2, 3, 4},
+		Model:       "test-model",
+		CreatedAt:   time.Now(),
+		ContentHash: "abc123hash",
+	}
+	if err := UpsertEmbedding(row); err != nil {
+		t.Fatalf("UpsertEmbedding: %v", err)
+	}
+
+	urls, err := ListEmbeddedURLs()
+	if err != nil {
+		t.Fatalf("ListEmbeddedURLs: %v", err)
+	}
+	info, ok := urls["https://example.com"]
+	if !ok {
+		t.Fatal("expected example.com in embedded URLs")
+	}
+	if info.ContentHash != "abc123hash" {
+		t.Errorf("expected content_hash 'abc123hash', got %q", info.ContentHash)
+	}
+}
+
+func TestEmbedding_ContentHashUpdatedOnUpsert(t *testing.T) {
+	setupTestDB(t)
+
+	row := &EmbeddingRow{
+		URL:         "https://example.com",
+		ChunkIndex:  0,
+		ChunkText:   "test chunk",
+		Embedding:   []byte{1, 2, 3, 4},
+		Model:       "test-model",
+		CreatedAt:   time.Now(),
+		ContentHash: "hash_v1",
+	}
+	_ = UpsertEmbedding(row)
+
+	// Update with new hash
+	row.ContentHash = "hash_v2"
+	row.ChunkText = "updated chunk"
+	_ = UpsertEmbedding(row)
+
+	urls, _ := ListEmbeddedURLs()
+	if urls["https://example.com"].ContentHash != "hash_v2" {
+		t.Errorf("expected hash_v2, got %q", urls["https://example.com"].ContentHash)
+	}
+}
+
+func TestEmbedding_LegacyEmptyHash(t *testing.T) {
+	setupTestDB(t)
+
+	// Simulate pre-v3 embedding with no content hash
+	row := &EmbeddingRow{
+		URL:         "https://example.com",
+		ChunkIndex:  0,
+		ChunkText:   "test chunk",
+		Embedding:   []byte{1, 2, 3, 4},
+		Model:       "test-model",
+		CreatedAt:   time.Now(),
+		ContentHash: "",
+	}
+	_ = UpsertEmbedding(row)
+
+	urls, _ := ListEmbeddedURLs()
+	info := urls["https://example.com"]
+	if info.ContentHash != "" {
+		t.Errorf("expected empty hash for legacy embedding, got %q", info.ContentHash)
+	}
+}
