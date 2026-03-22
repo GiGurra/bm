@@ -59,7 +59,7 @@ func OpenMem() (*sql.DB, error) {
 	return db, nil
 }
 
-const currentSchemaVersion = 3
+const currentSchemaVersion = 4
 
 func migrate(db *sql.DB) error {
 	// Ensure schema_version table exists
@@ -104,6 +104,8 @@ func applyMigration(db *sql.DB, version int) error {
 		return migrateV2(db)
 	case 3:
 		return migrateV3(db)
+	case 4:
+		return migrateV4(db)
 	default:
 		return fmt.Errorf("unknown migration version %d", version)
 	}
@@ -147,12 +149,15 @@ func migrateV1(db *sql.DB) error {
 		END`,
 		`CREATE TABLE IF NOT EXISTS bookmark_embeddings (
 			url TEXT NOT NULL,
+			folder_path TEXT NOT NULL DEFAULT '',
+			source TEXT NOT NULL DEFAULT '',
 			chunk_index INTEGER NOT NULL,
 			chunk_text TEXT NOT NULL DEFAULT '',
 			embedding BLOB,
 			model TEXT NOT NULL DEFAULT '',
 			created_at TEXT NOT NULL DEFAULT '',
-			PRIMARY KEY (url, chunk_index)
+			content_hash TEXT NOT NULL DEFAULT '',
+			PRIMARY KEY (url, folder_path, source, chunk_index)
 		)`,
 	}
 	for _, stmt := range stmts {
@@ -220,7 +225,41 @@ func migrateV2(db *sql.DB) error {
 }
 
 // migrateV3 adds content_hash column to bookmark_embeddings for change detection.
+// On fresh databases (v1 already has the column), this is a no-op.
 func migrateV3(db *sql.DB) error {
+	// Check if column already exists (v1 schema includes it)
+	var count int
+	_ = db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('bookmark_embeddings') WHERE name='content_hash'`).Scan(&count)
+	if count > 0 {
+		return nil
+	}
 	_, err := db.Exec(`ALTER TABLE bookmark_embeddings ADD COLUMN content_hash TEXT NOT NULL DEFAULT ''`)
 	return err
+}
+
+// migrateV4 changes bookmark_embeddings PK from (url, chunk_index) to
+// (url, folder_path, source, chunk_index) to match the bookmarks table keying.
+// Existing embeddings are dropped — they'll be regenerated on next `bm index`.
+func migrateV4(db *sql.DB) error {
+	stmts := []string{
+		`DROP TABLE IF EXISTS bookmark_embeddings`,
+		`CREATE TABLE bookmark_embeddings (
+			url TEXT NOT NULL,
+			folder_path TEXT NOT NULL DEFAULT '',
+			source TEXT NOT NULL DEFAULT '',
+			chunk_index INTEGER NOT NULL,
+			chunk_text TEXT NOT NULL DEFAULT '',
+			embedding BLOB,
+			model TEXT NOT NULL DEFAULT '',
+			created_at TEXT NOT NULL DEFAULT '',
+			content_hash TEXT NOT NULL DEFAULT '',
+			PRIMARY KEY (url, folder_path, source, chunk_index)
+		)`,
+	}
+	for _, stmt := range stmts {
+		if _, err := db.Exec(stmt); err != nil {
+			return fmt.Errorf("%w\n  SQL: %s", err, stmt)
+		}
+	}
+	return nil
 }

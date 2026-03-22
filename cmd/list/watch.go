@@ -634,28 +634,29 @@ func (m *watchModel) runSemanticSearch(query string) tea.Cmd {
 		if err != nil {
 			return semanticResultMsg{query: query, err: err}
 		}
-		byURL := make(map[string]db.Bookmark, len(bookmarks))
+		byKey := make(map[db.BookmarkKey]db.Bookmark, len(bookmarks))
 		for _, bk := range bookmarks {
-			byURL[bk.URL] = bk
+			byKey[db.BookmarkKey{URL: bk.URL, FolderPath: bk.FolderPath, Source: bk.Source}] = bk
 		}
 
-		// Best match per URL
+		// Best match per bookmark key
 		type match struct {
-			url        string
+			key        db.BookmarkKey
 			similarity float32
 		}
-		bestByURL := make(map[string]*match)
+		bestByKey := make(map[db.BookmarkKey]*match)
 		for _, emb := range allEmbeddings {
 			vec := ollama.BytesToFloat32(emb.Embedding)
 			sim := ollama.CosineSimilarity(queryEmbedding, vec)
-			if best, ok := bestByURL[emb.URL]; !ok || sim > best.similarity {
-				bestByURL[emb.URL] = &match{url: emb.URL, similarity: sim}
+			key := db.BookmarkKey{URL: emb.URL, FolderPath: emb.FolderPath, Source: emb.Source}
+			if best, ok := bestByKey[key]; !ok || sim > best.similarity {
+				bestByKey[key] = &match{key: key, similarity: sim}
 			}
 		}
 
 		var results []semanticMatch
-		for _, mt := range bestByURL {
-			if bk, ok := byURL[mt.url]; ok {
+		for _, mt := range bestByKey {
+			if bk, ok := byKey[mt.key]; ok {
 				results = append(results, semanticMatch{bookmark: bk, similarity: mt.similarity})
 			}
 		}

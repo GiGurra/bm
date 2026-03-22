@@ -20,7 +20,7 @@ type Bookmark struct {
 	ChromeAddedAt string // original Chrome bookmark creation time
 }
 
-type bookmarkKey struct {
+type BookmarkKey struct {
 	URL        string
 	FolderPath string
 	Source     string
@@ -68,7 +68,7 @@ func BulkUpsertBookmarks(bookmarks []*Bookmark) (inserted, updated, deleted, tot
 	}
 
 	// Load existing bookmarks into a map keyed by (url, folder_path, source)
-	existing := make(map[bookmarkKey]Bookmark)
+	existing := make(map[BookmarkKey]Bookmark)
 	rows, err := db.Query(`SELECT url, title, folder_path, source, source_name, chrome_added_at FROM bookmarks`)
 	if err != nil {
 		return 0, 0, 0, 0, fmt.Errorf("load existing bookmarks: %w", err)
@@ -79,7 +79,7 @@ func BulkUpsertBookmarks(bookmarks []*Bookmark) (inserted, updated, deleted, tot
 			rows.Close()
 			return 0, 0, 0, 0, fmt.Errorf("scan existing bookmark: %w", err)
 		}
-		existing[bookmarkKey{b.URL, b.FolderPath, b.Source}] = b
+		existing[BookmarkKey{b.URL, b.FolderPath, b.Source}] = b
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
@@ -87,9 +87,9 @@ func BulkUpsertBookmarks(bookmarks []*Bookmark) (inserted, updated, deleted, tot
 	}
 
 	// Deduplicate by composite key, keeping the entry with the latest chrome_added_at
-	deduped := make(map[bookmarkKey]*Bookmark, len(bookmarks))
+	deduped := make(map[BookmarkKey]*Bookmark, len(bookmarks))
 	for _, b := range bookmarks {
-		key := bookmarkKey{b.URL, b.FolderPath, b.Source}
+		key := BookmarkKey{b.URL, b.FolderPath, b.Source}
 		if prev, exists := deduped[key]; !exists || b.ChromeAddedAt > prev.ChromeAddedAt {
 			deduped[key] = b
 		}
@@ -105,7 +105,7 @@ func BulkUpsertBookmarks(bookmarks []*Bookmark) (inserted, updated, deleted, tot
 		}
 		b.UpdatedAt = now
 
-		key := bookmarkKey{b.URL, b.FolderPath, b.Source}
+		key := BookmarkKey{b.URL, b.FolderPath, b.Source}
 		if old, exists := existing[key]; exists {
 			changed := old.Title != b.Title ||
 				(b.SourceName != "" && old.SourceName != b.SourceName) ||
@@ -121,7 +121,7 @@ func BulkUpsertBookmarks(bookmarks []*Bookmark) (inserted, updated, deleted, tot
 	}
 
 	// Find stale entries: in DB for an incoming source but absent from the incoming set
-	var toDelete []bookmarkKey
+	var toDelete []BookmarkKey
 	for key, eb := range existing {
 		if !incomingSources[eb.Source] {
 			continue // different source, don't touch
@@ -171,7 +171,7 @@ func BulkUpsertBookmarks(bookmarks []*Bookmark) (inserted, updated, deleted, tot
 		}
 		defer delBookmark.Close()
 
-		delEmbed, err := tx.Prepare(`DELETE FROM bookmark_embeddings WHERE url = ?`)
+		delEmbed, err := tx.Prepare(`DELETE FROM bookmark_embeddings WHERE url = ? AND folder_path = ? AND source = ?`)
 		if err != nil {
 			return 0, 0, 0, 0, fmt.Errorf("prepare delete embeddings: %w", err)
 		}
@@ -181,14 +181,8 @@ func BulkUpsertBookmarks(bookmarks []*Bookmark) (inserted, updated, deleted, tot
 			if _, err := delBookmark.Exec(key.URL, key.FolderPath, key.Source); err != nil {
 				return 0, 0, 0, 0, fmt.Errorf("delete bookmark %s: %w", key.URL, err)
 			}
-			// Clean up embeddings for this URL (only if no other bookmark entries share it)
-			var remaining int
-			_ = tx.QueryRow(`SELECT COUNT(*) FROM bookmarks WHERE url = ? AND NOT (folder_path = ? AND source = ?)`,
-				key.URL, key.FolderPath, key.Source).Scan(&remaining)
-			if remaining == 0 {
-				if _, err := delEmbed.Exec(key.URL); err != nil {
-					return 0, 0, 0, 0, fmt.Errorf("delete embeddings for %s: %w", key.URL, err)
-				}
+			if _, err := delEmbed.Exec(key.URL, key.FolderPath, key.Source); err != nil {
+				return 0, 0, 0, 0, fmt.Errorf("delete embeddings for %s: %w", key.URL, err)
 			}
 		}
 	}

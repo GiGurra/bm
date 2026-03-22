@@ -110,24 +110,25 @@ func runSemantic(params *Params) {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
-	byURL := make(map[string]db.Bookmark, len(bookmarks))
+	byKey := make(map[db.BookmarkKey]db.Bookmark, len(bookmarks))
 	for _, b := range bookmarks {
-		byURL[b.URL] = b
+		byKey[db.BookmarkKey{URL: b.URL, FolderPath: b.FolderPath, Source: b.Source}] = b
 	}
 
-	// Find best-matching chunk per URL
+	// Find best-matching chunk per bookmark key
 	type match struct {
-		url        string
+		key        db.BookmarkKey
 		similarity float32
 	}
-	bestByURL := make(map[string]*match)
+	bestByKey := make(map[db.BookmarkKey]*match)
 
 	for _, emb := range allEmbeddings {
 		vec := ollama.BytesToFloat32(emb.Embedding)
 		sim := ollama.CosineSimilarity(queryEmbedding, vec)
 
-		if best, ok := bestByURL[emb.URL]; !ok || sim > best.similarity {
-			bestByURL[emb.URL] = &match{url: emb.URL, similarity: sim}
+		key := db.BookmarkKey{URL: emb.URL, FolderPath: emb.FolderPath, Source: emb.Source}
+		if best, ok := bestByKey[key]; !ok || sim > best.similarity {
+			bestByKey[key] = &match{key: key, similarity: sim}
 		}
 	}
 
@@ -137,8 +138,8 @@ func runSemantic(params *Params) {
 		similarity float32
 	}
 	var results []result
-	for _, m := range bestByURL {
-		if b, ok := byURL[m.url]; ok {
+	for _, m := range bestByKey {
+		if b, ok := byKey[m.key]; ok {
 			results = append(results, result{bookmark: b, similarity: m.similarity})
 		}
 	}

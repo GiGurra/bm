@@ -468,9 +468,10 @@ func TestBulkUpsert_DeleteCleansUpEmbeddings(t *testing.T) {
 	}
 	BulkUpsertBookmarks(bookmarks)
 
-	// Add embeddings for b.com
+	// Add embeddings for b.com with matching triple
 	_ = UpsertEmbedding(&EmbeddingRow{
-		URL: "https://b.com", ChunkIndex: 0, ChunkText: "chunk",
+		URL: "https://b.com", FolderPath: "bar", Source: "chrome:p1",
+		ChunkIndex: 0, ChunkText: "chunk",
 		Embedding: []byte{1, 2}, Model: "test", CreatedAt: time.Now(),
 	})
 
@@ -491,7 +492,7 @@ func TestBulkUpsert_DeleteCleansUpEmbeddings(t *testing.T) {
 	}
 }
 
-func TestBulkUpsert_DeletePreservesSharedEmbeddings(t *testing.T) {
+func TestBulkUpsert_DeletePreservesOtherSourceEmbeddings(t *testing.T) {
 	setupTestDB(t)
 
 	// Same URL in two sources
@@ -505,15 +506,19 @@ func TestBulkUpsert_DeletePreservesSharedEmbeddings(t *testing.T) {
 	}
 	BulkUpsertBookmarks(batch2)
 
-	// Add embeddings for the shared URL
+	// Add embeddings for both sources
 	_ = UpsertEmbedding(&EmbeddingRow{
-		URL: "https://shared.com", ChunkIndex: 0, ChunkText: "shared chunk",
+		URL: "https://shared.com", FolderPath: "bar", Source: "chrome:p1",
+		ChunkIndex: 0, ChunkText: "p1 chunk",
 		Embedding: []byte{1, 2}, Model: "test", CreatedAt: time.Now(),
 	})
+	_ = UpsertEmbedding(&EmbeddingRow{
+		URL: "https://shared.com", FolderPath: "bar", Source: "chrome:p2",
+		ChunkIndex: 0, ChunkText: "p2 chunk",
+		Embedding: []byte{3, 4}, Model: "test", CreatedAt: time.Now(),
+	})
 
-	// Delete from p1 only (p2 still has it)
-	batch1 = []*Bookmark{} // empty = remove all from p1... but incomingSources is empty
-	// Need at least one bookmark to trigger deletion for p1
+	// Delete from p1 only
 	batch1 = []*Bookmark{
 		{URL: "https://other.com", Title: "Other", FolderPath: "bar", Source: "chrome:p1"},
 	}
@@ -525,10 +530,13 @@ func TestBulkUpsert_DeletePreservesSharedEmbeddings(t *testing.T) {
 		t.Errorf("expected 1 deleted, got %d", deleted)
 	}
 
-	// Embeddings should be preserved because p2 still has the bookmark
+	// p2's embeddings should be preserved, p1's should be deleted
 	embeds, _ := ListAllEmbeddings()
 	if len(embeds) != 1 {
-		t.Errorf("expected embeddings preserved (shared URL), got %d", len(embeds))
+		t.Errorf("expected 1 embedding (p2 preserved), got %d", len(embeds))
+	}
+	if len(embeds) == 1 && embeds[0].Source != "chrome:p2" {
+		t.Errorf("expected p2 embedding preserved, got source %q", embeds[0].Source)
 	}
 }
 
@@ -637,9 +645,12 @@ func TestListYearStats_UsesLocalYear(t *testing.T) {
 func TestEmbeddingCRUD(t *testing.T) {
 	setupTestDB(t)
 
+	key := BookmarkKey{URL: "https://example.com", FolderPath: "bar", Source: "chrome"}
 	now := time.Now()
 	row := &EmbeddingRow{
-		URL:        "https://example.com",
+		URL:        key.URL,
+		FolderPath: key.FolderPath,
+		Source:     key.Source,
 		ChunkIndex: 0,
 		ChunkText:  "test chunk",
 		Embedding:  []byte{1, 2, 3, 4},
@@ -674,13 +685,13 @@ func TestEmbeddingCRUD(t *testing.T) {
 		t.Errorf("upsert didn't update: %q", all[0].ChunkText)
 	}
 
-	// List embedded URLs
-	urls, err := ListEmbeddedURLs()
+	// List embedded keys
+	keys, err := ListEmbeddedKeys()
 	if err != nil {
-		t.Fatalf("ListEmbeddedURLs: %v", err)
+		t.Fatalf("ListEmbeddedKeys: %v", err)
 	}
-	if _, ok := urls["https://example.com"]; !ok {
-		t.Error("expected example.com in embedded URLs")
+	if _, ok := keys[key]; !ok {
+		t.Error("expected example.com in embedded keys")
 	}
 
 	// List models
@@ -693,8 +704,8 @@ func TestEmbeddingCRUD(t *testing.T) {
 	}
 
 	// Delete
-	if err := DeleteEmbeddingsForURL("https://example.com"); err != nil {
-		t.Fatalf("DeleteEmbeddingsForURL: %v", err)
+	if err := DeleteEmbeddings(key.URL, key.FolderPath, key.Source); err != nil {
+		t.Fatalf("DeleteEmbeddings: %v", err)
 	}
 	all, _ = ListAllEmbeddings()
 	if len(all) != 0 {
@@ -705,8 +716,11 @@ func TestEmbeddingCRUD(t *testing.T) {
 func TestEmbedding_ContentHashStored(t *testing.T) {
 	setupTestDB(t)
 
+	key := BookmarkKey{URL: "https://example.com", FolderPath: "bar", Source: "chrome"}
 	row := &EmbeddingRow{
-		URL:         "https://example.com",
+		URL:         key.URL,
+		FolderPath:  key.FolderPath,
+		Source:      key.Source,
 		ChunkIndex:  0,
 		ChunkText:   "test chunk",
 		Embedding:   []byte{1, 2, 3, 4},
@@ -718,13 +732,13 @@ func TestEmbedding_ContentHashStored(t *testing.T) {
 		t.Fatalf("UpsertEmbedding: %v", err)
 	}
 
-	urls, err := ListEmbeddedURLs()
+	keys, err := ListEmbeddedKeys()
 	if err != nil {
-		t.Fatalf("ListEmbeddedURLs: %v", err)
+		t.Fatalf("ListEmbeddedKeys: %v", err)
 	}
-	info, ok := urls["https://example.com"]
+	info, ok := keys[key]
 	if !ok {
-		t.Fatal("expected example.com in embedded URLs")
+		t.Fatal("expected example.com in embedded keys")
 	}
 	if info.ContentHash != "abc123hash" {
 		t.Errorf("expected content_hash 'abc123hash', got %q", info.ContentHash)
@@ -734,8 +748,11 @@ func TestEmbedding_ContentHashStored(t *testing.T) {
 func TestEmbedding_ContentHashUpdatedOnUpsert(t *testing.T) {
 	setupTestDB(t)
 
+	key := BookmarkKey{URL: "https://example.com", FolderPath: "bar", Source: "chrome"}
 	row := &EmbeddingRow{
-		URL:         "https://example.com",
+		URL:         key.URL,
+		FolderPath:  key.FolderPath,
+		Source:      key.Source,
 		ChunkIndex:  0,
 		ChunkText:   "test chunk",
 		Embedding:   []byte{1, 2, 3, 4},
@@ -750,18 +767,20 @@ func TestEmbedding_ContentHashUpdatedOnUpsert(t *testing.T) {
 	row.ChunkText = "updated chunk"
 	_ = UpsertEmbedding(row)
 
-	urls, _ := ListEmbeddedURLs()
-	if urls["https://example.com"].ContentHash != "hash_v2" {
-		t.Errorf("expected hash_v2, got %q", urls["https://example.com"].ContentHash)
+	keys, _ := ListEmbeddedKeys()
+	if keys[key].ContentHash != "hash_v2" {
+		t.Errorf("expected hash_v2, got %q", keys[key].ContentHash)
 	}
 }
 
 func TestEmbedding_LegacyEmptyHash(t *testing.T) {
 	setupTestDB(t)
 
-	// Simulate pre-v3 embedding with no content hash
+	key := BookmarkKey{URL: "https://example.com", FolderPath: "bar", Source: "chrome"}
 	row := &EmbeddingRow{
-		URL:         "https://example.com",
+		URL:         key.URL,
+		FolderPath:  key.FolderPath,
+		Source:      key.Source,
 		ChunkIndex:  0,
 		ChunkText:   "test chunk",
 		Embedding:   []byte{1, 2, 3, 4},
@@ -771,8 +790,8 @@ func TestEmbedding_LegacyEmptyHash(t *testing.T) {
 	}
 	_ = UpsertEmbedding(row)
 
-	urls, _ := ListEmbeddedURLs()
-	info := urls["https://example.com"]
+	keys, _ := ListEmbeddedKeys()
+	info := keys[key]
 	if info.ContentHash != "" {
 		t.Errorf("expected empty hash for legacy embedding, got %q", info.ContentHash)
 	}

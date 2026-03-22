@@ -92,24 +92,25 @@ func Run(url, model, profile, maxAge string, reindex bool) {
 	}
 
 	// Check what's already indexed
-	embeddedURLs, err := db.ListEmbeddedURLs()
+	embeddedKeys, err := db.ListEmbeddedKeys()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
 
 	if reindex {
-		embeddedURLs = make(map[string]db.EmbeddedURLInfo)
+		embeddedKeys = make(map[db.BookmarkKey]db.EmbeddedInfo)
 	}
 
 	var toIndex []db.Bookmark
 	changed := 0
 	for _, b := range bookmarks {
-		info, exists := embeddedURLs[b.URL]
+		key := db.BookmarkKey{URL: b.URL, FolderPath: b.FolderPath, Source: b.Source}
+		info, exists := embeddedKeys[key]
 		if !exists {
 			toIndex = append(toIndex, b)
 		} else if info.ContentHash == "" || info.ContentHash != contentHash(b) {
-			// Empty hash (legacy/pre-v3) or content changed — re-index
+			// Empty hash (legacy) or content changed — re-index
 			toIndex = append(toIndex, b)
 			changed++
 		}
@@ -143,8 +144,9 @@ func Run(url, model, profile, maxAge string, reindex bool) {
 		hash := contentHash(b)
 
 		// Delete old embeddings when re-indexing (forced, changed, or legacy without hash)
-		if _, exists := embeddedURLs[b.URL]; reindex || exists {
-			_ = db.DeleteEmbeddingsForURL(b.URL)
+		key := db.BookmarkKey{URL: b.URL, FolderPath: b.FolderPath, Source: b.Source}
+		if _, exists := embeddedKeys[key]; reindex || exists {
+			_ = db.DeleteEmbeddings(b.URL, b.FolderPath, b.Source)
 		}
 
 		stored := 0
@@ -155,6 +157,8 @@ func Run(url, model, profile, maxAge string, reindex bool) {
 			}
 			row := &db.EmbeddingRow{
 				URL:         b.URL,
+				FolderPath:  b.FolderPath,
+				Source:      b.Source,
 				ChunkIndex:  chunk.index,
 				ChunkText:   chunk.text,
 				Embedding:   ollama.Float32ToBytes(embedding),
