@@ -135,6 +135,97 @@ func ShortenPath(p string, maxWidth int) string {
 	return TruncateWithEllipsis(filename, maxWidth)
 }
 
+// ScrollWindow returns a sliding window view of a string for scroll animation.
+// At offset 0, truncates from end (like TruncateWithEllipsis).
+// At offset > 0, shows content starting from that display-cell offset with ellipsis indicators.
+func ScrollWindow(s string, maxWidth int, offset int) string {
+	if maxWidth <= 0 {
+		return ""
+	}
+
+	totalWidth := lipgloss.Width(s)
+	if totalWidth <= maxWidth {
+		return s
+	}
+
+	if offset <= 0 {
+		return TruncateWithEllipsis(s, maxWidth)
+	}
+
+	// For very small widths, fall back to simple truncation
+	if maxWidth < 4 {
+		return TruncateFromStart(s, maxWidth)
+	}
+
+	runes := []rune(s)
+
+	// Skip offset display cells from the start
+	skipped := 0
+	startIdx := len(runes)
+	for i, r := range runes {
+		if skipped >= offset {
+			startIdx = i
+			break
+		}
+		skipped += runewidth.RuneWidth(r)
+	}
+
+	if startIdx >= len(runes) {
+		return TruncateFromStart(s, maxWidth)
+	}
+
+	// Reserve 1 cell for left ellipsis "…"
+	contentWidth := maxWidth - 1
+
+	// Check if remaining content fits
+	result := make([]rune, 0)
+	currentWidth := 0
+	fitsEntirely := true
+	for i := startIdx; i < len(runes); i++ {
+		rw := runewidth.RuneWidth(runes[i])
+		if currentWidth+rw > contentWidth {
+			fitsEntirely = false
+			break
+		}
+		result = append(result, runes[i])
+		currentWidth += rw
+	}
+
+	if fitsEntirely {
+		return "…" + string(result)
+	}
+
+	// Need right ellipsis too — rebuild with smaller content area
+	contentWidth = maxWidth - 2 // 1 for left "…", 1 for right "…"
+	result = result[:0]
+	currentWidth = 0
+	for i := startIdx; i < len(runes); i++ {
+		rw := runewidth.RuneWidth(runes[i])
+		if currentWidth+rw > contentWidth {
+			break
+		}
+		result = append(result, runes[i])
+		currentWidth += rw
+	}
+	return "…" + string(result) + "…"
+}
+
+// MaxScrollOffset returns the maximum scroll offset (in display cells) for ScrollWindow.
+// Returns 0 if the string fits within maxWidth.
+func MaxScrollOffset(s string, maxWidth int) int {
+	totalWidth := lipgloss.Width(s)
+	if totalWidth <= maxWidth {
+		return 0
+	}
+	// When scrolled, left ellipsis uses 1 cell, so at max offset
+	// we show "…" + last (maxWidth-1) cells of content
+	maxOffset := totalWidth - (maxWidth - 1)
+	if maxOffset < 0 {
+		return 0
+	}
+	return maxOffset
+}
+
 // PadRight pads a string to the specified display width with spaces on the right.
 // If the string is wider than width, it is truncated.
 func PadRight(s string, width int) string {

@@ -58,6 +58,16 @@ type debounceMsg struct {
 	mode  searchMode
 }
 
+type scrollTickMsg struct {
+	seq int
+}
+
+const (
+	scrollTickInterval = 100 * time.Millisecond
+	scrollStartPause   = 10 // ticks to pause at start (~1s)
+	scrollEndPause     = 10 // ticks to pause at end (~1s)
+)
+
 type watchModel struct {
 	// Data
 	allBookmarks []db.Bookmark
@@ -93,6 +103,19 @@ type watchModel struct {
 
 	// Help
 	helpView bool
+
+	// Scroll animation for selected row (shared ticker for all columns)
+	colScrolls      map[int]*colScroll // column index -> scroll state
+	scrollSeq       int
+	cachedColWidths []int
+}
+
+// colScroll tracks scroll animation state for a single column.
+type colScroll struct {
+	offset  int
+	pause   int
+	reverse bool // true = scroll right-to-left (for TruncateStart columns)
+	inited  bool // false = offset needs initialization from maxOffset
 }
 
 func newWatchModel() *watchModel {
@@ -132,8 +155,8 @@ func (m *watchModel) columns() []table.Column {
 	cols := []table.Column{
 		{Header: "", Width: 1},
 		{Header: "TITLE", MinWidth: 20, Weight: 0.3, Truncate: true, SortKey: "title"},
-		{Header: "URL", MinWidth: 20, Weight: 0.3, Truncate: true, TruncateMode: table.TruncateStart, SortKey: "url"},
-		{Header: "FOLDER", MinWidth: 10, Weight: 0.25, Truncate: true, TruncateMode: table.TruncateStart, SortKey: "folder"},
+		{Header: "URL", MinWidth: 20, Weight: 0.3, Truncate: true, SortKey: "url"},
+		{Header: "FOLDER", MinWidth: 10, Weight: 0.25, Truncate: true, SortKey: "folder"},
 		{Header: "ADDED", Width: 12, SortKey: "added"},
 	}
 	if m.searchMode == modeSemantic && m.scores != nil {
@@ -163,6 +186,29 @@ func (m *watchModel) ensureVisible() {
 // --- tea.Model interface ---
 
 func (m *watchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	// Handle scroll animation ticks
+	if tick, ok := msg.(scrollTickMsg); ok {
+		return m, m.handleScrollTick(tick)
+	}
+
+	// Track state to detect changes that should reset URL scroll
+	prevCursor := m.cursor
+	prevDisplayedLen := len(m.displayed)
+	prevWidth := m.width
+	prevSort := m.sortState
+
+	_, cmd := m.handleMessage(msg)
+
+	// Reset and restart scroll animation on cursor/data/layout changes
+	if m.cursor != prevCursor || len(m.displayed) != prevDisplayedLen || m.width != prevWidth || m.sortState != prevSort {
+		m.resetScroll()
+		cmd = tea.Batch(cmd, m.startScrollTick())
+	}
+
+	return m, cmd
+}
+
+func (m *watchModel) handleMessage(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
@@ -442,6 +488,97 @@ func (m *watchModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m *watchModel) resetScroll() {
+	m.colScrolls = map[int]*colScroll{
+		1: {pause: scrollStartPause},                             // title: scroll left-to-right
+		2: {pause: scrollStartPause},                             // URL: scroll left-to-right
+		3: {pause: scrollStartPause},                             // folder: scroll left-to-right
+	}
+	m.scrollSeq++
+}
+
+func (m *watchModel) startScrollTick() tea.Cmd {
+	seq := m.scrollSeq
+	return tea.Tick(scrollTickInterval, func(t time.Time) tea.Msg {
+		return scrollTickMsg{seq: seq}
+	})
+}
+
+func (m *watchModel) handleScrollTick(tick scrollTickMsg) tea.Cmd {
+	if tick.seq != m.scrollSeq {
+		return nil
+	}
+	if m.cursor < 0 || m.cursor >= len(m.displayed) {
+		return nil
+	}
+
+	bk := m.displayed[m.cursor]
+	contents := map[int]string{1: bk.Title, 2: bk.URL, 3: bk.FolderPath}
+
+	anyActive := false
+	for colIdx, content := range contents {
+		cs := m.colScrolls[colIdx]
+		if cs == nil {
+			continue
+		}
+
+		colWidth := 0
+		if colIdx < len(m.cachedColWidths) {
+			colWidth = m.cachedColWidths[colIdx]
+		}
+		if colWidth <= 0 {
+			continue
+		}
+
+		maxOffset := table.MaxScrollOffset(content, colWidth)
+		if maxOffset <= 0 {
+			continue
+		}
+
+		// Initialize offset for reverse columns (start at end to match TruncateStart display)
+		if !cs.inited {
+			if cs.reverse {
+				cs.offset = maxOffset
+			}
+			cs.inited = true
+		}
+
+		anyActive = true
+
+		if cs.pause > 0 {
+			cs.pause--
+			continue
+		}
+
+		if cs.reverse {
+			if cs.offset <= 0 {
+				cs.offset = maxOffset
+				cs.pause = scrollStartPause
+				continue
+			}
+			cs.offset--
+			if cs.offset <= 0 {
+				cs.pause = scrollEndPause
+			}
+		} else {
+			if cs.offset >= maxOffset {
+				cs.offset = 0
+				cs.pause = scrollStartPause
+				continue
+			}
+			cs.offset++
+			if cs.offset >= maxOffset {
+				cs.pause = scrollEndPause
+			}
+		}
+	}
+
+	if !anyActive {
+		return nil
+	}
+	return m.startScrollTick()
+}
+
 func (m *watchModel) View() tea.View {
 	if m.helpView {
 		return tea.View{Content: m.renderHelp(), AltScreen: true}
@@ -535,6 +672,23 @@ func (m *watchModel) View() tea.View {
 			cells = append(cells, score)
 		}
 		tbl.AddRow(table.Row{Cells: cells})
+	}
+
+	// Cache column widths and apply scroll animation to selected row
+	m.cachedColWidths = tbl.CalculateWidths()
+	if m.cursor >= 0 && m.cursor < len(tbl.Rows) {
+		bk := m.displayed[m.cursor]
+		scrollable := map[int]string{1: bk.Title, 2: bk.URL, 3: bk.FolderPath}
+		for colIdx, content := range scrollable {
+			cs := m.colScrolls[colIdx]
+			if cs == nil || colIdx >= len(m.cachedColWidths) {
+				continue
+			}
+			w := m.cachedColWidths[colIdx]
+			if w > 0 && table.StringWidth(content) > w {
+				tbl.Rows[m.cursor].Cells[colIdx] = table.ScrollWindow(content, w, cs.offset)
+			}
+		}
 	}
 
 	b.WriteString(tbl.RenderWithScroll(&wHelpStyle))
