@@ -13,7 +13,33 @@ go install .
 
 ## Architecture
 
-**Entry point:** `main.go` — builds cobra command tree. Commands live under `cmd/`, library packages under `pkg/`.
+**Entry point:** `main.go` — builds cobra command tree.
+
+**Commands (under `cmd/`):**
+
+| Command    | Purpose                                                  |
+|------------|----------------------------------------------------------|
+| `import`   | Import bookmarks from Chrome (auto-discovers all profiles) |
+| `fetch`    | Fetch page content (HTML → text) for bookmarked URLs     |
+| `index`    | Generate embeddings via Ollama for semantic search       |
+| `search`   | Text search (FTS5) or semantic search (`-s` flag)        |
+| `list`     | List/filter bookmarks + interactive TUI mode (`-w`)      |
+| `sync`     | Run import + index in sequence (--fetch to also fetch)   |
+| `stats`    | Show database statistics (per-profile, per-year, fetch status) |
+| `config`   | View and modify settings (add/remove profiles)           |
+| `clear`    | Clear data                                               |
+| `common`   | Shared helpers (e.g. profile completion alternatives)    |
+
+**Packages (under `pkg/`):**
+
+| Package   | Purpose                                                  |
+|-----------|----------------------------------------------------------|
+| `config`  | Settings from `~/.bm/settings.json`. Profile resolution (CLI > env > config > all) |
+| `db`      | SQLite storage (bookmarks, FTS5, embeddings). WAL mode, pure-Go via `modernc.org/sqlite` |
+| `chrome`  | Chrome bookmark file parser. Multi-profile discovery     |
+| `fetcher` | HTTP page fetch + HTML text extraction                   |
+| `ollama`  | Ollama embedding client, cosine similarity, vector encoding |
+| `table`   | TUI table widget for interactive mode                    |
 
 **Data location:** `~/.bm/bm.sqlite`
 
