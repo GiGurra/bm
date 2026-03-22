@@ -2,24 +2,7 @@
 
 ## Project Structure
 
-```
-main.go          CLI entry point (cobra command tree)
-cmd/
-  importcmd/     Import bookmarks from Chrome
-  fetch/         Fetch page content (HTML → text)
-  index/         Generate Ollama embeddings
-  search/        Text (FTS5) and semantic search
-  list/          List/filter bookmarks + interactive TUI
-  sync/          Run import + index (--fetch to also fetch)
-  stats/         Database statistics
-  clear/         Clear data
-pkg/
-  db/            SQLite storage (bookmarks, FTS5, embeddings)
-  chrome/        Chrome bookmark file parser
-  fetcher/       HTTP page fetch + HTML text extraction
-  ollama/        Ollama embedding client
-  table/         TUI table widget
-```
+Entry point is `main.go` which builds the cobra command tree. Commands live under `cmd/`, library packages under `pkg/`.
 
 ## Database
 
