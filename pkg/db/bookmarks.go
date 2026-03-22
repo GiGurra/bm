@@ -2,6 +2,7 @@ package db
 
 import (
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -366,16 +367,35 @@ func ListProfileStats() ([]ProfileStats, error) {
 	return result, rows.Err()
 }
 
-// ListBookmarksBySource returns bookmarks filtered by source ID or source name.
-func ListBookmarksBySource(sourceFilter string) ([]Bookmark, error) {
+// sourceInClause returns a SQL fragment and args for filtering by source IDs.
+// Returns empty string and nil args if sources is nil/empty (no filtering).
+func sourceInClause(sources []string) (string, []any) {
+	if len(sources) == 0 {
+		return "", nil
+	}
+	placeholders := make([]string, len(sources))
+	args := make([]any, len(sources))
+	for i, s := range sources {
+		placeholders[i] = "?"
+		args[i] = s
+	}
+	return "source IN (" + strings.Join(placeholders, ",") + ")", args
+}
+
+// ListBookmarksBySources returns bookmarks filtered by source IDs.
+// Pass nil to return all bookmarks (equivalent to ListBookmarks).
+func ListBookmarksBySources(sources []string) ([]Bookmark, error) {
+	if len(sources) == 0 {
+		return ListBookmarks()
+	}
 	db, err := Open()
 	if err != nil {
 		return nil, err
 	}
 
+	where, args := sourceInClause(sources)
 	rows, err := db.Query(`SELECT url, title, folder_path, source, source_name, content_text, fetched_at, fetch_status, added_at, updated_at, chrome_added_at
-		FROM bookmarks WHERE source = ? OR source_name LIKE ? ORDER BY updated_at DESC`,
-		sourceFilter, "%"+sourceFilter+"%")
+		FROM bookmarks WHERE `+where+` ORDER BY updated_at DESC`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -384,17 +404,21 @@ func ListBookmarksBySource(sourceFilter string) ([]Bookmark, error) {
 	return scanBookmarks(rows)
 }
 
-// ListFetchableBySource returns fetchable bookmarks filtered by source.
-func ListFetchableBySource(sourceFilter string) ([]Bookmark, error) {
+// ListFetchableBySources returns fetchable bookmarks filtered by source IDs.
+// Pass nil to return all fetchable bookmarks.
+func ListFetchableBySources(sources []string) ([]Bookmark, error) {
+	if len(sources) == 0 {
+		return ListFetchable()
+	}
 	db, err := Open()
 	if err != nil {
 		return nil, err
 	}
 
+	where, args := sourceInClause(sources)
 	rows, err := db.Query(`SELECT url, title, folder_path, source, source_name, content_text, fetched_at, fetch_status, added_at, updated_at, chrome_added_at
-		FROM bookmarks WHERE fetched_at = '' AND fetch_status = '' AND (source = ? OR source_name LIKE ?)
-		ORDER BY added_at DESC`,
-		sourceFilter, "%"+sourceFilter+"%")
+		FROM bookmarks WHERE fetched_at = '' AND fetch_status = '' AND (`+where+`)
+		ORDER BY added_at DESC`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -413,7 +437,8 @@ type YearStats struct {
 }
 
 // ListYearStats returns aggregate stats grouped by year of chrome_added_at.
-func ListYearStats(sourceFilter string) ([]YearStats, error) {
+// Pass nil sources for all bookmarks.
+func ListYearStats(sources []string) ([]YearStats, error) {
 	db, err := Open()
 	if err != nil {
 		return nil, err
@@ -429,9 +454,10 @@ func ListYearStats(sourceFilter string) ([]YearStats, error) {
 		FROM bookmarks`
 
 	var args []any
-	if sourceFilter != "" {
-		query += ` WHERE source = ? OR source_name LIKE ?`
-		args = append(args, sourceFilter, "%"+sourceFilter+"%")
+	if len(sources) > 0 {
+		where, whereArgs := sourceInClause(sources)
+		query += ` WHERE ` + where
+		args = whereArgs
 	}
 	query += `
 		GROUP BY year
@@ -461,7 +487,8 @@ type FetchStatusStats struct {
 }
 
 // ListFetchStatusStats returns bookmark counts grouped by fetch_status.
-func ListFetchStatusStats(sourceFilter string) ([]FetchStatusStats, error) {
+// Pass nil sources for all bookmarks.
+func ListFetchStatusStats(sources []string) ([]FetchStatusStats, error) {
 	db, err := Open()
 	if err != nil {
 		return nil, err
@@ -478,9 +505,10 @@ func ListFetchStatusStats(sourceFilter string) ([]FetchStatusStats, error) {
 		FROM bookmarks`
 
 	var args []any
-	if sourceFilter != "" {
-		query += ` WHERE source = ? OR source_name LIKE ?`
-		args = append(args, sourceFilter, "%"+sourceFilter+"%")
+	if len(sources) > 0 {
+		where, whereArgs := sourceInClause(sources)
+		query += ` WHERE ` + where
+		args = whereArgs
 	}
 	query += `
 		GROUP BY status

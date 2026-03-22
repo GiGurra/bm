@@ -615,7 +615,7 @@ func TestListYearStats_UsesLocalYear(t *testing.T) {
 		ChromeAddedAt: "2019-06-15T12:00:00+02:00",
 	})
 
-	stats, err := ListYearStats("")
+	stats, err := ListYearStats(nil)
 	if err != nil {
 		t.Fatalf("ListYearStats: %v", err)
 	}

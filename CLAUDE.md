@@ -31,12 +31,31 @@ go install .
 
 | Package   | Purpose                                                  |
 |-----------|----------------------------------------------------------|
+| `config`  | Settings from `~/.bm/settings.json`. Profile resolution (CLI > env > config > all) |
 | `db`      | SQLite storage (bookmarks, FTS5, embeddings). WAL mode, pure-Go via `modernc.org/sqlite` |
 | `chrome`  | Chrome bookmark file parser. Multi-profile discovery     |
 | `fetcher` | HTTP page fetch + HTML text extraction                   |
 | `ollama`  | Ollama embedding client, cosine similarity, vector encoding |
 
 **Data location:** `~/.bm/bm.sqlite`
+
+## Configuration
+
+**Config file:** `~/.bm/settings.json`
+
+```json
+{
+  "profiles": [
+    {"email": "user@gmail.com"},
+    {"gaia_id": "12345678"}
+  ]
+}
+```
+
+**Profile resolution priority:** `--profile` flag > `BM_PROFILE` env var > config file > default (all profiles)
+
+- Profiles are identified by `email` (Google account) or `gaia_id` (stable Google account ID) — not directory names like "Default" which Chrome can reassign.
+- `--profile all` or `BM_PROFILE=all` forces all profiles, overriding config.
 
 ## Future Ideas
 

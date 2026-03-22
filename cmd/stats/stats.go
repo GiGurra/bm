@@ -8,13 +8,14 @@ import (
 
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/gigurra/bm/pkg/chrome"
+	"github.com/gigurra/bm/pkg/config"
 	"github.com/gigurra/bm/pkg/db"
 	"github.com/jedib0t/go-pretty/v6/table"
 	"github.com/spf13/cobra"
 )
 
 type Params struct {
-	Profile string `short:"p" optional:"true" help:"Filter by profile (name, email, or source ID)"`
+	Profile string `short:"p" optional:"true" env:"BM_PROFILE" help:"Filter by profile (name, email, or source ID; 'all' for all profiles)"`
 }
 
 func Cmd() *cobra.Command {
@@ -27,10 +28,26 @@ func Cmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(params *Params, cmd *cobra.Command, args []string) {
-			profileFilter := params.Profile
+			// Resolve profiles from CLI/env/config
+			resolved, err := config.ResolveProfiles(params.Profile)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				os.Exit(1)
+			}
+
+			// Resolve source IDs for DB queries
+			var dbSources []string
+			if resolved != nil {
+				for _, p := range resolved {
+					dbSources = append(dbSources, p.SourceID())
+				}
+			}
 
 			// Per-profile: Chrome JSON vs imported vs fetched vs indexed
-			profiles, _ := chrome.DiscoverProfiles()
+			profiles := resolved
+			if profiles == nil {
+				profiles, _ = chrome.DiscoverProfiles()
+			}
 			dbProfileStats, _ := db.ListProfileStats()
 
 			dbBySource := make(map[string]db.ProfileStats)
@@ -38,29 +55,10 @@ func Cmd() *cobra.Command {
 				dbBySource[s.Source] = s
 			}
 
-			// Filter Chrome profiles if --profile is set
-			if profileFilter != "" {
-				var filtered []chrome.Profile
-				for _, p := range profiles {
-					if p.DirName == profileFilter || p.UserName == profileFilter || p.Name == profileFilter {
-						filtered = append(filtered, p)
-					}
-				}
-				profiles = filtered
-			}
-
 			// Collect deduped Chrome bookmarks for per-year counts.
 			chromeByYear := make(map[string]int)
 
-			// Resolve the source ID for the DB queries
-			dbSourceFilter := ""
-			if profileFilter != "" && len(profiles) > 0 {
-				dbSourceFilter = profiles[0].SourceID()
-			} else if profileFilter != "" {
-				dbSourceFilter = profileFilter
-			}
-
-			if len(profiles) > 0 || (profileFilter == "" && len(dbProfileStats) > 0) {
+			if len(profiles) > 0 || (resolved == nil && len(dbProfileStats) > 0) {
 				fmt.Println("Profiles:")
 				t := table.NewWriter()
 				t.SetOutputMirror(os.Stdout)
@@ -94,7 +92,7 @@ func Cmd() *cobra.Command {
 				}
 
 				// DB profiles not matched to a Chrome profile (e.g. removed profiles)
-				if profileFilter == "" {
+				if resolved == nil {
 					for _, dbs := range dbBySource {
 						name := dbs.SourceName
 						if name == "" {
@@ -112,7 +110,7 @@ func Cmd() *cobra.Command {
 			}
 
 			// By year
-			yearStats, err := db.ListYearStats(dbSourceFilter)
+			yearStats, err := db.ListYearStats(dbSources)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 				os.Exit(1)
@@ -164,7 +162,7 @@ func Cmd() *cobra.Command {
 			}
 
 			// Fetch status breakdown
-			fetchStats, err := db.ListFetchStatusStats(dbSourceFilter)
+			fetchStats, err := db.ListFetchStatusStats(dbSources)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 				os.Exit(1)
@@ -190,7 +188,7 @@ func profileAlternatives(_ *cobra.Command, _ []string, toComplete string) []stri
 	if err != nil {
 		return nil
 	}
-	var alts []string
+	alts := []string{"all"}
 	for _, p := range profiles {
 		for _, candidate := range []string{p.UserName, p.SourceID(), p.DirName} {
 			if candidate != "" && strings.HasPrefix(strings.ToLower(candidate), strings.ToLower(toComplete)) {

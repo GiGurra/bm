@@ -8,6 +8,7 @@ import (
 
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/gigurra/bm/pkg/chrome"
+	"github.com/gigurra/bm/pkg/config"
 	"github.com/gigurra/bm/pkg/db"
 	"github.com/gigurra/bm/pkg/fetcher"
 	"github.com/spf13/cobra"
@@ -18,7 +19,7 @@ type Params struct {
 	Limit   int    `short:"n" help:"Max number of bookmarks to fetch" default:"0"`
 	Delay   int    `short:"d" help:"Delay in milliseconds between fetches" default:"500"`
 	MaxAge  string `long:"max-age" help:"Skip bookmarks older than this (e.g. 1y, 6m, 90d)" default:"1y"`
-	Profile string `short:"p" optional:"true" help:"Filter by profile (name, email, or source ID)"`
+	Profile string `short:"p" optional:"true" env:"BM_PROFILE" help:"Filter by profile (name, email, or source ID; 'all' for all profiles)"`
 }
 
 func Cmd() *cobra.Command {
@@ -38,21 +39,17 @@ func Cmd() *cobra.Command {
 }
 
 func Run(profile, maxAge string, all bool, limit, delay int) {
-	var bookmarks []db.Bookmark
-	var err error
+	sources, err := config.ResolveSourceIDs(profile)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
 
+	var bookmarks []db.Bookmark
 	if all {
-		if profile != "" {
-			bookmarks, err = db.ListBookmarksBySource(profile)
-		} else {
-			bookmarks, err = db.ListBookmarks()
-		}
+		bookmarks, err = db.ListBookmarksBySources(sources)
 	} else {
-		if profile != "" {
-			bookmarks, err = db.ListFetchableBySource(profile)
-		} else {
-			bookmarks, err = db.ListFetchable()
-		}
+		bookmarks, err = db.ListFetchableBySources(sources)
 	}
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -143,7 +140,7 @@ func profileAlternatives(_ *cobra.Command, _ []string, toComplete string) []stri
 	if err != nil {
 		return nil
 	}
-	var alts []string
+	alts := []string{"all"}
 	for _, p := range profiles {
 		for _, candidate := range []string{p.UserName, p.SourceID(), p.DirName} {
 			if candidate != "" && strings.HasPrefix(strings.ToLower(candidate), strings.ToLower(toComplete)) {

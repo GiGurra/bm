@@ -8,6 +8,7 @@ import (
 
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/gigurra/bm/pkg/chrome"
+	"github.com/gigurra/bm/pkg/config"
 	"github.com/gigurra/bm/pkg/db"
 	"github.com/gigurra/bm/pkg/ollama"
 	"github.com/spf13/cobra"
@@ -20,7 +21,7 @@ type Params struct {
 	Model   string `long:"model" env:"BM_EMBED_MODEL" help:"Embedding model" default:"qwen3-embedding:0.6b"`
 	URL     string `long:"url" env:"BM_OLLAMA_URL" help:"Ollama API base URL" default:"http://localhost:11434"`
 	MaxAge  string `long:"max-age" help:"Skip bookmarks older than this (e.g. 1y, 6m, 90d)" default:"1y"`
-	Profile string `short:"p" optional:"true" help:"Filter by profile (name, email, or source ID)"`
+	Profile string `short:"p" optional:"true" env:"BM_PROFILE" help:"Filter by profile (name, email, or source ID; 'all' for all profiles)"`
 }
 
 func Cmd() *cobra.Command {
@@ -51,13 +52,14 @@ func Run(url, model, profile, maxAge string, reindex bool) {
 		os.Exit(1)
 	}
 
-	var bookmarks []db.Bookmark
-	var err error
-	if profile != "" {
-		bookmarks, err = db.ListBookmarksBySource(profile)
-	} else {
-		bookmarks, err = db.ListBookmarks()
+	sources, err := config.ResolveSourceIDs(profile)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
 	}
+
+	var bookmarks []db.Bookmark
+	bookmarks, err = db.ListBookmarksBySources(sources)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
@@ -243,7 +245,7 @@ func profileAlternatives(_ *cobra.Command, _ []string, toComplete string) []stri
 	if err != nil {
 		return nil
 	}
-	var alts []string
+	alts := []string{"all"}
 	for _, p := range profiles {
 		for _, candidate := range []string{p.UserName, p.SourceID(), p.DirName} {
 			if candidate != "" && strings.HasPrefix(strings.ToLower(candidate), strings.ToLower(toComplete)) {

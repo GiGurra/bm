@@ -65,7 +65,7 @@ type watchModel struct {
 	scores       map[string]float32 // URL -> similarity (semantic mode)
 
 	// Filters
-	profileFilter string
+	sourceFilter []string
 
 	// Navigation
 	cursor         int
@@ -120,11 +120,7 @@ func (m *watchModel) loadBookmarks() tea.Cmd {
 	return func() tea.Msg {
 		var bookmarks []db.Bookmark
 		var err error
-		if m.profileFilter != "" {
-			bookmarks, err = db.ListBookmarksBySource(m.profileFilter)
-		} else {
-			bookmarks, err = db.ListBookmarks()
-		}
+		bookmarks, err = db.ListBookmarksBySources(m.sourceFilter)
 		if err != nil {
 			return ftsResultMsg{err: err}
 		}
@@ -732,9 +728,9 @@ func openURL(urlStr string) tea.Cmd {
 }
 
 // RunWatch starts the interactive watch mode.
-func RunWatch(profile string) error {
+func RunWatch(sources []string) error {
 	m := newWatchModel()
-	m.profileFilter = profile
+	m.sourceFilter = sources
 	p := tea.NewProgram(m)
 	_, err := p.Run()
 	return err

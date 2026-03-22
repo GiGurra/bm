@@ -18,7 +18,7 @@ type Params struct {
 	Query    string `pos:"true" help:"Search query"`
 	Limit    int    `short:"n" help:"Max results" default:"10"`
 	Semantic bool   `short:"s" help:"Use semantic search (requires index + Ollama)"`
-	Profile  string `short:"p" optional:"true" help:"Filter by profile (name, email, or source ID)"`
+	Profile  string `short:"p" optional:"true" env:"BM_PROFILE" help:"Filter by profile (name, email, or source ID; 'all' for all profiles)"`
 	Model    string `long:"model" env:"BM_EMBED_MODEL" help:"Embedding model" default:"qwen3-embedding:0.6b"`
 	URL      string `long:"url" env:"BM_OLLAMA_URL" help:"Ollama API base URL" default:"http://localhost:11434"`
 }
@@ -180,7 +180,7 @@ func profileAlternatives(_ *cobra.Command, _ []string, toComplete string) []stri
 	if err != nil {
 		return nil
 	}
-	var alts []string
+	alts := []string{"all"}
 	for _, p := range profiles {
 		for _, candidate := range []string{p.UserName, p.SourceID(), p.DirName} {
 			if candidate != "" && strings.HasPrefix(strings.ToLower(candidate), strings.ToLower(toComplete)) {

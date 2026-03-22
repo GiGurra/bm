@@ -5,6 +5,7 @@ import (
 	"os"
 
 	"github.com/gigurra/bm/cmd/clear"
+	"github.com/gigurra/bm/cmd/configcmd"
 	"github.com/gigurra/bm/cmd/fetch"
 	"github.com/gigurra/bm/cmd/importcmd"
 	"github.com/gigurra/bm/cmd/index"
@@ -30,6 +31,7 @@ func main() {
 		sync.Cmd(),
 		clear.Cmd(),
 		stats.Cmd(),
+		configcmd.Cmd(),
 	)
 
 	if err := root.Execute(); err != nil {

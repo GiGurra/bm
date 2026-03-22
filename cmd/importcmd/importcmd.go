@@ -7,6 +7,7 @@ import (
 
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/gigurra/bm/pkg/chrome"
+	"github.com/gigurra/bm/pkg/config"
 	"github.com/gigurra/bm/pkg/db"
 	"github.com/spf13/cobra"
 )
@@ -14,7 +15,7 @@ import (
 type Params struct {
 	Path        string `pos:"true" optional:"true" help:"Path to Chrome Bookmarks JSON file (auto-detected if omitted)"`
 	AllProfiles bool   `short:"a" long:"all-profiles" help:"Import from all Chrome profiles"`
-	Profile     string `short:"p" optional:"true" help:"Chrome profile name (e.g. 'Default', 'Profile 1')"`
+	Profile     string `short:"p" optional:"true" env:"BM_PROFILE" help:"Chrome profile (email, gaia ID, or dir name; 'all' for all profiles)"`
 }
 
 func Cmd() *cobra.Command {
@@ -39,27 +40,25 @@ func Run(path, profile string) {
 		return
 	}
 
-	if profile != "" {
-		profiles, err := chrome.DiscoverProfiles()
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
-		}
-		for _, p := range profiles {
-			if p.DirName == profile || p.UserName == profile || p.Name == profile {
-				importProfile(p)
-				return
-			}
-		}
-		fmt.Fprintf(os.Stderr, "Profile %q not found. Available profiles:\n", profile)
-		for _, p := range profiles {
-			fmt.Fprintf(os.Stderr, "  - %s\n", p.DisplayName())
-		}
+	resolved, err := config.ResolveProfiles(profile)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
+	}
+
+	if resolved == nil {
+		importAllProfiles()
 		return
 	}
 
-	importAllProfiles()
+	totalImported := 0
+	for _, p := range resolved {
+		count := importProfile(p)
+		totalImported += count
+	}
+	if len(resolved) > 1 {
+		fmt.Printf("\nTotal: %d bookmarks from %d profiles\n", totalImported, len(resolved))
+	}
 }
 
 func importAllProfiles() {
@@ -131,7 +130,7 @@ func profileAlternatives(_ *cobra.Command, _ []string, toComplete string) []stri
 	if err != nil {
 		return nil
 	}
-	var alts []string
+	alts := []string{"all"}
 	for _, p := range profiles {
 		for _, candidate := range []string{p.UserName, p.SourceID(), p.DirName} {
 			if candidate != "" && strings.HasPrefix(strings.ToLower(candidate), strings.ToLower(toComplete)) {

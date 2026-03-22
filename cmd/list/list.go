@@ -9,6 +9,7 @@ import (
 
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/gigurra/bm/pkg/chrome"
+	"github.com/gigurra/bm/pkg/config"
 	"github.com/gigurra/bm/pkg/db"
 	"github.com/jedib0t/go-pretty/v6/table"
 	"github.com/spf13/cobra"
@@ -19,7 +20,7 @@ type Params struct {
 	Folder  string `short:"f" optional:"true" help:"Filter by folder path (substring match)"`
 	Limit   int    `short:"n" help:"Max results" default:"50"`
 	Watch   bool   `short:"w" long:"watch" help:"Interactive mode with search"`
-	Profile string `short:"p" optional:"true" help:"Filter by profile (name, email, or source ID)"`
+	Profile string `short:"p" optional:"true" env:"BM_PROFILE" help:"Filter by profile (name, email, or source ID; 'all' for all profiles)"`
 }
 
 func Cmd() *cobra.Command {
@@ -32,8 +33,14 @@ func Cmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(params *Params, cmd *cobra.Command, args []string) {
+			sources, err := config.ResolveSourceIDs(params.Profile)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				os.Exit(1)
+			}
+
 			if params.Watch {
-				if err := RunWatch(params.Profile); err != nil {
+				if err := RunWatch(sources); err != nil {
 					fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 					os.Exit(1)
 				}
@@ -41,12 +48,7 @@ func Cmd() *cobra.Command {
 			}
 
 			var bookmarks []db.Bookmark
-			var err error
-			if params.Profile != "" {
-				bookmarks, err = db.ListBookmarksBySource(params.Profile)
-			} else {
-				bookmarks, err = db.ListBookmarks()
-			}
+			bookmarks, err = db.ListBookmarksBySources(sources)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 				os.Exit(1)
@@ -150,7 +152,7 @@ func profileAlternatives(_ *cobra.Command, _ []string, toComplete string) []stri
 	if err != nil {
 		return nil
 	}
-	var alts []string
+	alts := []string{"all"}
 	for _, p := range profiles {
 		for _, candidate := range []string{p.UserName, p.SourceID(), p.DirName} {
 			if candidate != "" && strings.HasPrefix(strings.ToLower(candidate), strings.ToLower(toComplete)) {
