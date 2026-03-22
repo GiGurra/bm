@@ -54,9 +54,13 @@ type AddProfileParams struct {
 }
 
 func addProfileCmd() *cobra.Command {
-	cmd := boa.CmdT[AddProfileParams]{
+	return boa.CmdT[AddProfileParams]{
 		Use:   "add-profile",
 		Short: "Add a Chrome profile to the config",
+		InitFuncCtx: func(ctx *boa.HookContext, params *AddProfileParams, cmd *cobra.Command) error {
+			ctx.GetParam(&params.Identifier).SetAlternativesFunc(addProfileAlternatives)
+			return nil
+		},
 		RunFunc: func(params *AddProfileParams, cmd *cobra.Command, args []string) {
 			id := params.Identifier
 
@@ -113,8 +117,6 @@ func addProfileCmd() *cobra.Command {
 			fmt.Printf("Added profile %q (%d profile(s) in config)\n", label, len(cfg.Profiles))
 		},
 	}.ToCobra()
-	cmd.ValidArgsFunction = addProfileValidArgs
-	return cmd
 }
 
 type RemoveProfileParams struct {
@@ -122,9 +124,13 @@ type RemoveProfileParams struct {
 }
 
 func removeProfileCmd() *cobra.Command {
-	cmd := boa.CmdT[RemoveProfileParams]{
+	return boa.CmdT[RemoveProfileParams]{
 		Use:   "remove-profile",
 		Short: "Remove a Chrome profile from the config",
+		InitFuncCtx: func(ctx *boa.HookContext, params *RemoveProfileParams, cmd *cobra.Command) error {
+			ctx.GetParam(&params.Identifier).SetAlternativesFunc(removeProfileAlternatives)
+			return nil
+		},
 		RunFunc: func(params *RemoveProfileParams, cmd *cobra.Command, args []string) {
 			cfg := config.Load()
 			id := params.Identifier
@@ -153,15 +159,13 @@ func removeProfileCmd() *cobra.Command {
 			fmt.Printf("Removed profile %q (%d profile(s) remaining)\n", id, len(cfg.Profiles))
 		},
 	}.ToCobra()
-	cmd.ValidArgsFunction = removeProfileValidArgs
-	return cmd
 }
 
-// addProfileValidArgs suggests Chrome profiles not yet in the config.
-func addProfileValidArgs(_ *cobra.Command, _ []string, _ string) ([]string, cobra.ShellCompDirective) {
+// addProfileAlternatives suggests Chrome profiles not yet in the config.
+func addProfileAlternatives(_ *cobra.Command, _ []string, _ string) []string {
 	profiles, err := chrome.DiscoverProfiles()
 	if err != nil {
-		return nil, cobra.ShellCompDirectiveNoFileComp
+		return nil
 	}
 	cfg := config.Load()
 	existing := make(map[string]bool)
@@ -180,11 +184,11 @@ func addProfileValidArgs(_ *cobra.Command, _ []string, _ string) ([]string, cobr
 			alts = append(alts, p.UserName)
 		}
 	}
-	return alts, cobra.ShellCompDirectiveNoFileComp
+	return alts
 }
 
-// removeProfileValidArgs suggests profiles currently in the config.
-func removeProfileValidArgs(_ *cobra.Command, _ []string, _ string) ([]string, cobra.ShellCompDirective) {
+// removeProfileAlternatives suggests profiles currently in the config.
+func removeProfileAlternatives(_ *cobra.Command, _ []string, _ string) []string {
 	cfg := config.Load()
 	var alts []string
 	for _, p := range cfg.Profiles {
@@ -194,5 +198,5 @@ func removeProfileValidArgs(_ *cobra.Command, _ []string, _ string) ([]string, c
 			alts = append(alts, p.GaiaID)
 		}
 	}
-	return alts, cobra.ShellCompDirectiveNoFileComp
+	return alts
 }

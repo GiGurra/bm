@@ -3,10 +3,9 @@ package search
 import (
 	"fmt"
 	"os"
-	"strings"
 
 	"github.com/GiGurra/boa/pkg/boa"
-	"github.com/gigurra/bm/pkg/chrome"
+	"github.com/gigurra/bm/cmd/common"
 	"github.com/gigurra/bm/pkg/db"
 	"github.com/gigurra/bm/pkg/ollama"
 	"github.com/jedib0t/go-pretty/v6/table"
@@ -29,7 +28,7 @@ func Cmd() *cobra.Command {
 		Short: "Search bookmarks by text or meaning",
 		Long:  "Text search (FTS5) by default, or semantic search with -s flag.",
 		InitFuncCtx: func(ctx *boa.HookContext, params *Params, cmd *cobra.Command) error {
-			ctx.GetParam(&params.Profile).SetAlternativesFunc(profileAlternatives)
+			ctx.GetParam(&params.Profile).SetAlternativesFunc(common.ProfileAlternatives)
 			ctx.GetParam(&params.Profile).SetStrictAlts(false)
 			return nil
 		},
@@ -175,21 +174,6 @@ func runSemantic(params *Params) {
 	t.Render()
 }
 
-func profileAlternatives(_ *cobra.Command, _ []string, toComplete string) []string {
-	profiles, err := chrome.DiscoverProfiles()
-	if err != nil {
-		return nil
-	}
-	alts := []string{"all"}
-	for _, p := range profiles {
-		for _, candidate := range []string{p.UserName, p.SourceID(), p.DirName} {
-			if candidate != "" && strings.HasPrefix(strings.ToLower(candidate), strings.ToLower(toComplete)) {
-				alts = append(alts, candidate)
-			}
-		}
-	}
-	return alts
-}
 
 func getTerminalWidth() int {
 	if width, _, err := term.GetSize(int(os.Stdout.Fd())); err == nil && width > 0 {

@@ -4,11 +4,10 @@ import (
 	"fmt"
 	"os"
 	"sort"
-	"strings"
 	"time"
 
 	"github.com/GiGurra/boa/pkg/boa"
-	"github.com/gigurra/bm/pkg/chrome"
+	"github.com/gigurra/bm/cmd/common"
 	"github.com/gigurra/bm/pkg/config"
 	"github.com/gigurra/bm/pkg/db"
 	"github.com/jedib0t/go-pretty/v6/table"
@@ -28,7 +27,7 @@ func Cmd() *cobra.Command {
 		Use:   "list",
 		Short: "List bookmarks",
 		InitFuncCtx: func(ctx *boa.HookContext, params *Params, cmd *cobra.Command) error {
-			ctx.GetParam(&params.Profile).SetAlternativesFunc(profileAlternatives)
+			ctx.GetParam(&params.Profile).SetAlternativesFunc(common.ProfileAlternatives)
 			ctx.GetParam(&params.Profile).SetStrictAlts(false)
 			return nil
 		},
@@ -147,21 +146,6 @@ func truncateWithEllipsis(col string, maxLen int) string {
 	return col[:maxLen-3] + "..."
 }
 
-func profileAlternatives(_ *cobra.Command, _ []string, toComplete string) []string {
-	profiles, err := chrome.DiscoverProfiles()
-	if err != nil {
-		return nil
-	}
-	alts := []string{"all"}
-	for _, p := range profiles {
-		for _, candidate := range []string{p.UserName, p.SourceID(), p.DirName} {
-			if candidate != "" && strings.HasPrefix(strings.ToLower(candidate), strings.ToLower(toComplete)) {
-				alts = append(alts, candidate)
-			}
-		}
-	}
-	return alts
-}
 
 func containsIgnoreCase(s, substr string) bool {
 	return len(s) >= len(substr) && (s == substr || len(substr) == 0 ||
