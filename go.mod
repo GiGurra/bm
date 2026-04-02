@@ -6,7 +6,7 @@ require (
 	charm.land/bubbles/v2 v2.0.0
 	charm.land/bubbletea/v2 v2.0.2
 	charm.land/lipgloss/v2 v2.0.2
-	github.com/GiGurra/boa v1.0.1
+	github.com/GiGurra/boa v1.0.2
 	github.com/jedib0t/go-pretty/v6 v6.7.8
 	github.com/mattn/go-runewidth v0.0.21
 	github.com/spf13/cobra v1.10.2
